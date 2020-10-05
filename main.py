@@ -78,7 +78,7 @@ def main():
 
     frame_width = 1920
     frame_height = 1080
-    play_fps = 25
+    play_fps = 1000
     frame_frequency = 1.0 / play_fps
     min_score = config.min_score
     mergeROIs = not config.no_merge_rois
@@ -223,16 +223,14 @@ def main():
                     if not save_roi:
                         print('not this one')
                         continue
-                    print(f'Saving in {DATA_PATH}/saved_rois/{img_id}.jpg')
+                    print(f'Saving in {DATA_PATH}/saved_rois/{num_frames}.{img_id}.jpg')
                     cropped_roi = np.array(frame[roi[1]:roi[3], roi[0]:roi[2]])
-                    cv2.imwrite(f'{DATA_PATH}/saved_rois/{img_id}.jpg', cropped_roi)
-
-                    # save whole frame for comparison
-                    if not frame_saved:
-                        cv2.imwrite(f'{DATA_PATH}/saved_rois/frames/{img_id}.jpg', frame)
-                        frame_saved = True
-                        
+                    cv2.imwrite(f'{DATA_PATH}/saved_rois/{num_frames}.{img_id}.jpg', cropped_roi)
                     img_id = img_id + 1
+
+                # save whole frame for comparison
+                cv2.imwrite(f'{DATA_PATH}/frames/{num_frames}.jpg', frame)
+                        
 
         end_time = time.time() 
        
