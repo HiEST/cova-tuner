@@ -4,7 +4,8 @@ import imutils
 import cv2
 
 from utils.nms import non_max_suppression_fast
-from utils.constants import *
+from utils.iou import compute_iou
+from utils import constants
 
 def GaussianBlur(frame):
 # To filter out small variations from frame to frame 
@@ -24,31 +25,83 @@ def merge_all_boxes(boxes):
 
     return (minX, minY, maxX, maxY)
 
+def merge_overlapping_boxes(boxes, iou=0.01):
+    
+    while True:
+        num_boxes = len(boxes)
+        for i, box in enumerate(boxes):
+            intersections = [compute_iou(box, box2) if j != i else 1 for j, box2 in enumerate(boxes)]
+            overlap = np.where(np.array(intersections) > iou)[0]
+            not_overlap = np.where(np.array(intersections) <= iou)[0]
+                
+            if len(overlap) <= 1:
+                continue
+
+            for over in overlap:
+                if over == i:
+                    continue
+            
+            overlapping = [boxes[idx] for idx in overlap]
+            new_box = merge_all_boxes(np.array(overlapping))
+            new_boxes = [boxes[idx] for idx in not_overlap]
+            new_boxes.append(new_box)
+            boxes = np.array(new_boxes)
+            break
+
+        if num_boxes == len(boxes):
+            break
+
+    return boxes
+
+def merge_near_boxes(boxes, proximity=1.05):
+    new_boxes = [
+        [
+            max(0, int(box[0]*(proximity-1))),
+            max(0, int(box[1]*(proximity-1))),
+            min(1920, int(box[2]*proximity)),
+            min(1080, int(box[3]*proximity))
+        ]
+        for box in boxes
+    ]
+
+    merged_boxes = merge_overlapping_boxes(np.array(new_boxes), 0.5)
+    # print(f'boxes: {boxes}')
+    # print(f'new_boxes: {new_boxes}')
+    # print(f'merged_boxes: {merged_boxes}')
+
+    return boxes
+    return np.array(new_boxes)
+    # return merged_boxes
+
+
 def propose_rois(boxes, roi_width=256, roi_height=256, max_width=1920, max_height=1080, random_factor=1):
     roi_proposals = []
     boxes = np.array(boxes)
 
+    
     if len(boxes) > 1:
         boxes = non_max_suppression_fast(boxes)
+
+    # boxes = merge_near_boxes(boxes)
 
     for box in boxes:
         width = box[2] - box[0]
         height = box[3] - box[1]
-        if width < ROI_SIZE[0] and height < ROI_SIZE[1]:
-            new_roi = ROI_SIZE
+        if width < constants.ROI_SIZE[0] and height < constants.ROI_SIZE[1]:
+            new_roi = constants.ROI_SIZE
 
         elif width < height:
-            # Resize with same aspect ratio as ROI_SIZE
+            # Resize with same aspect ratio as constants.ROI_SIZE
             aspect = width / height
             new_roi = [
-                width * (ROI_AR/aspect),
+                width * (constants.ROI_AR/aspect),
                 height
             ]
         else:
             aspect = width / height
             new_roi = [
                 width,
-                height * (aspect/ROI_AR),
+                height * (aspect/constants.ROI_AR),
             ]
 
         # Offset from the center of the box
@@ -73,6 +126,10 @@ def propose_rois(boxes, roi_width=256, roi_height=256, max_width=1920, max_heigh
 
     if len(roi_proposals) > 1:
         roi_proposals = non_max_suppression_fast(np.array(roi_proposals))
+
+    # print(f'before merging: {len(roi_proposals)}')
+    roi_proposals = merge_overlapping_boxes(roi_proposals, 0.05)
+    # print(f'after merging: {len(roi_proposals)}')
     return roi_proposals
 
 

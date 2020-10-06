@@ -22,7 +22,7 @@ import tensorflow_hub as hub
 # Auxiliary functions
 from utils.motion_detection import MotionDetection, Background
 from utils.classification import Classifier
-from utils.detector import init_detector, run_detector, detect_and_draw
+from utils.detector import init_detector, run_detector, detect_and_draw, label_map
 from utils.capture_screen import CaptureScreen
 from utils.constants import *
 
@@ -43,6 +43,10 @@ def open_video(video):
     return vs
 
 
+def pause():
+    cv2.waitKey(0)
+
+
 def main():
     # construct the argument parser and parse the arguments
     args = argparse.ArgumentParser()
@@ -52,6 +56,8 @@ def main():
 
     # Application control
     args.add_argument("--max-frames", type=int, default=0, help="maximum frames to process")
+    args.add_argument("--skip-frames", type=int, default=0, help="number of frames to skip for each frame processed")
+    args.add_argument("--loop", action="store_true", default=False, help="loop video")
 
     # Save results
     args.add_argument("-o", "--output", default=None, help="path to the output video file")
@@ -66,8 +72,10 @@ def main():
     
     # Detection/Classification
     args.add_argument("-m", "--model", default="resnet", help="Model for image classification")
-    args.add_argument("--min-score", type=float, default=0.3, help="minimum score for detections")
+    args.add_argument("--min-score", type=float, default=0.6, help="minimum score for detections")
+    args.add_argument("--max-boxes", type=float, default=10, help="maximumim number of bounding boxes per frame")
     args.add_argument("--detect", help="Detect objects using DNN.", action="store_true")
+    args.add_argument("--wait-for-detection", help="Number of frames to wait before first detection.", default=None, type=int)
     args.add_argument("--classify", help="Run image classification using DNN.", action="store_true")
     
     # Control what's shown
@@ -78,17 +86,21 @@ def main():
 
     frame_width = 1920
     frame_height = 1080
-    play_fps = 1000
+    play_fps = 1
     frame_frequency = 1.0 / play_fps
     min_score = config.min_score
     mergeROIs = not config.no_merge_rois
     pause = False
     img_id = 1
 
+    max_boxes = config.max_boxes
+    min_score = config.min_score
+
     # Stats
     frames_with_detection = 0
     total_detections = 0
     num_frames = 0
+    frames_skipped = 0
     # Time counters
     start_frame = 0
     end_frame = 0
@@ -121,6 +133,9 @@ def main():
 
     background = Background(
         no_average=config.no_average,
+        skip=10,
+        take=10,
+        use_last=15,
     )
 
     motionDetector = MotionDetection(
@@ -130,7 +145,26 @@ def main():
     )    
 
     while True:
+        ret, frame = vs.read()
+        # if the frame could not be grabbed, then we have reached the end
+        # of the video
+        if not ret:
+            if config.loop:
+                vs.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = vs.read()
+            
+            if not ret:
+                break
 
+        if config.skip_frames > 0:
+            if config.skip_frames > frames_skipped:
+                frames_skipped += 1
+                continue
+            else:
+                frames_skipped = 0
+        
+        
+        
         time_since_last_frame = time.time() - start_frame
         if time_since_last_frame < frame_frequency:
             time.sleep(frame_frequency-time_since_last_frame)
@@ -138,49 +172,70 @@ def main():
         start_frame = time.time()
         # read next frame
         if pause:
-            frame = prev_frame.copy()
-        else:
-            ret, frame = vs.read()
-            # if the frame could not be grabbed, then we have reached the end
-            # of the video
-            if not ret:
-                break
-            prev_frame = frame.copy()
-
+            while True: 
+                k = cv2.waitKey(0)
+                if key == ord("p"):
+                    break
+            pause = False
+            
+        
         if recorder:
             recorder.write(frame)
 
         if config.detect:
-            detection, inf_time = detect_and_draw(
-                detector=detector, 
-                roi=imutils.resize(frame, width=800), 
-                frame=None, 
-                min_score=min_score, 
-                results_file=results_file, 
-                frame_id=num_frames)
+            if config.wait_for_detection is None or num_frames >= config.wait_for_detection:
+
+                full_frame_detections = frame.copy()
+                results = run_detector(detector, full_frame_detections) 
+                boxes = results['detection_boxes'][0]
+                scores = results['detection_scores'][0]
+                class_ids = results['detection_classes'][0]
+
+                
+                detections_full_str = []
+                for i in range(min(boxes.shape[0], max_boxes)):
+                    if scores[i] >= min_score:
+                        ymin, xmin, ymax, xmax = tuple(boxes[i])
+                        
+                        (left, right, top, bottom) = (
+                            xmin * full_frame_detections.shape[1], 
+                            xmax * full_frame_detections.shape[1],
+                            ymin * full_frame_detections.shape[0], 
+                            ymax * full_frame_detections.shape[0]
+                        )
 
 
+                        class_id = int(class_ids[i])
+                        display_str = "{}: {}%".format(label_map[str(class_id)]['name'],
+                                                        int(100 * scores[i]))
+
+                        detections_full_str.append(display_str)
+                        
+                        cv2.rectangle(full_frame_detections, (int(left), int(top)), (int(right), int(bottom)), (255, 0, 0), 2)
+                        cv2.putText(full_frame_detections, display_str, (int(left), int(top)-10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+
+                joint_detections = full_frame_detections.copy()
+                
         start_time = time.time()
 
         boxes = motionDetector.detect(frame)            
 
+        
         if len(boxes):
+            
             frames_with_detection += 1
             total_detections += len(boxes)
 
             if config.classify or config.detect:
-                # roi_proposals = region_proposal(boxes.tolist())  
-                # frame_roi = frame.copy()      
-                # for i, roi in enumerate(boxes):
                 detection_frame = frame.copy()
+                detections_str = []
                 for roi in boxes:
                     cropped_roi = np.array(frame[roi[1]:roi[3], roi[0]:roi[2]])
 
                     if config.classify:
                         pred = classifier.classify(cropped_roi)
                         left, top, right, bottom = tuple(roi)
-                        # (left, right, top, bottom) = (xmin * frame.shape[1], xmax * frame.shape[1],
-                        #                     ymin * frame.shape[0], ymax * frame.shape[0])
                         
                         (imagenetID, label, prob) = pred[0]   
                         if prob > min_score:
@@ -196,25 +251,40 @@ def main():
                             cv2.putText(frame, pred_str, (int(left), int(top)-10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
-                            # cv2.rectangle(frame_roi, (roi[0], roi[1]), (roi[2], roi[3]), (255, 0, 255), 1)
                         else:
                             cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), COLOR_POOR_CLASSIF, 1)
 
                     if config.detect:
-                        # cropped_roi = np.array(frame[roi[1]:roi[3], roi[0]:roi[2]])
-                        detection_roi, inf_time = detect_and_draw(
-                                                            detector=detector, 
-                                                            roi=cropped_roi,
-                                                            frame=None, 
-                                                            min_score=min_score, 
-                                                            results_file=results_file, 
-                                                            frame_id=num_frames
-                                                        )
+                        if config.wait_for_detection is None or num_frames >= config.wait_for_detection:
 
-                        # replace roi in original detection frame
-                        detection_frame[roi[1]:roi[3], roi[0]:roi[2]] = detection_roi
-                    cv2.imshow(f"Detection ROI", imutils.resize(detection_frame, width=800))
-        
+                            results = run_detector(detector, cropped_roi) 
+                            boxes = results['detection_boxes'][0]
+                            scores = results['detection_scores'][0]
+                            class_ids = results['detection_classes'][0]
+                            
+                            cv2.rectangle(frame, (roi[0], roi[1]), (roi[2], roi[3]), COLOR_MOTION, 2)
+                            cv2.putText(frame, 'ROI', (roi[0], roi[1]-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, COLOR_MOTION, 2)
+
+                            for i in range(min(boxes.shape[0], max_boxes)):
+                                if scores[i] >= min_score:
+                                    ymin, xmin, ymax, xmax = tuple(boxes[i])
+                                    
+                                    (left, right, top, bottom) = (roi[0] + xmin * cropped_roi.shape[1], roi[0] + xmax * cropped_roi.shape[1],
+                                                                roi[1] + ymin * cropped_roi.shape[0], roi[1] + ymax * cropped_roi.shape[0])
+
+
+                                    class_id = int(class_ids[i])
+                                    display_str = "{}: {}%".format(label_map[str(class_id)]['name'],
+                                                                    int(100 * scores[i]))
+
+                                    detections_str.append(display_str)
+                                    
+                                    cv2.rectangle(joint_detections, (int(left), int(top)), (int(right), int(bottom)), (0, 255, 0), 2)
+                                    cv2.putText(joint_detections, display_str, (int(left), int(top)-10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                                                        
+                            
             if config.save:
                 print("Saving...")
                 frame_saved = False
@@ -235,18 +305,29 @@ def main():
         end_time = time.time() 
        
         if not config.no_show: 
-            # frame = imutils.resize(frame, width=800)  
             # Draw ROIs
             for box in boxes:
                 cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), COLOR_MOTION, 1)            
-            frame = imutils.resize(frame, width=800)  
             
-            cv2.putText(frame, "Background substraction time: {:.3f}".format(end_time - start_time), (10, 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
-            cv2.putText(frame, datetime.datetime.now().strftime("%A %d %B %Y %I:%M:%S%p"),
-                (10, frame.shape[0] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
-            
-            cv2.imshow("Motion detection", frame)
+
+            if config.detect:
+                joint_detections = imutils.resize(joint_detections, width=800)
+                for j, det in enumerate(detections_full_str):
+                    coords = (10, 20 + 15*j)
+                    if coords[1] >= joint_detections.shape[0]-20:
+                        break
+                    cv2.putText(joint_detections, detections_full_str[j], coords,
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+                if len(boxes):
+                    for j, det in enumerate(detections_str):
+                        coords = (joint_detections.shape[1]-100, 20 + 15*j)
+                        if coords[1] >= joint_detections.shape[0]-20:
+                            break
+                        cv2.putText(joint_detections, detections_str[j], coords,
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+
+                if config.wait_for_detection is None or num_frames >= config.wait_for_detection:
+                    cv2.imshow("Detections", joint_detections)
 
             if config.debug:
                 gray = motionDetector.current_gray
@@ -258,9 +339,9 @@ def main():
                 cv2.imshow("Thresh", imutils.resize(thresh, width=500))
                 cv2.imshow("Frame Delta", imutils.resize(frameDelta, width=500))
                 cv2.imshow("Background", imutils.resize(background_color, width=500))
-                
-            if config.detect:
-                cv2.imshow("Full frame Detection", imutils.resize(detection, width=800))
+                    
+            frame = imutils.resize(frame, width=800)  
+            cv2.imshow("Motion Detection", frame)
         
 
         key = cv2.waitKey(1) & 0xFF
@@ -270,6 +351,14 @@ def main():
             pause = not pause
         elif key == ord("n"):
             mergeROIs = not mergeROIs
+        elif key == ord("1"):
+            play_fps = play_fps - 1
+            print(f'fps: {play_fps}')
+            frame_frequency = 1.0 / play_fps
+        elif key == ord("2"):
+            play_fps = play_fps + 1
+            print(f'fps: {play_fps}')
+            frame_frequency = 1.0 / play_fps
 
         if not pause:
             num_frames = num_frames + 1
@@ -290,10 +379,10 @@ def main():
 
 
 if __name__ == "__main__":
-    pr = cProfile.Profile()
-    pr.enable()
+    # pr = cProfile.Profile()
+    # pr.enable()
     main()
-    pr.disable()
+    # pr.disable()
     # ps = pstats.Stats(pr).print_stats()
-    pr.print_stats(sort='time')
-    pr.dump_stats('main.profile')
+    # pr.print_stats(sort='time')
+    # pr.dump_stats('main.profile')
