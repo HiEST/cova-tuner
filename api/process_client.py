@@ -4,16 +4,14 @@ import argparse
 import base64
 import json
 import sys
-import time
 from pathlib import Path
 
 import cv2
-import numpy as np
 import pandas as pd
 import requests
 
 sys.path.append('../')
-from utils.detector import label_map, draw_predictions
+from utils.detector import label_map
 
 url = 'http://localhost:{}/{}'
 with open('imagenet.txt', 'r') as f:
@@ -22,7 +20,7 @@ with open('imagenet.txt', 'r') as f:
 
 def draw_bboxes(img, preds, max_boxes=5, min_score=.5, color=(255, 0, 0)):
     boxes_drawn = 0
-    
+
     img_ = img.copy()
     for idx, bb in enumerate(preds['boxes']):
         if boxes_drawn >= max_boxes:
@@ -31,10 +29,10 @@ def draw_bboxes(img, preds, max_boxes=5, min_score=.5, color=(255, 0, 0)):
         if preds['scores'][idx] >= min_score:
             ymin, xmin, ymax, xmax = bb
             (left, right, top, bottom) = (
-                xmin * img_.shape[1], # left
-                xmax * img_.shape[1], # top
-                ymin * img_.shape[0], # right
-                ymax * img_.shape[0]  # bottom
+                xmin * img_.shape[1],  # left
+                xmax * img_.shape[1],  # right
+                ymin * img_.shape[0],  # top
+                ymax * img_.shape[0]   # bottom
             )
             cv2.rectangle(img_, (int(left), int(top)),
                           (int(right), int(bottom)),
@@ -94,8 +92,8 @@ def process_video(filename, url, framework='torch', no_show=False):
     frame_id = 0
     ret, frame = cap.read()
     data = []
-    
-    error = False 
+
+    error = False
     while ret:
         frame = cv2.resize(frame, (800, 600))
         _, buf = cv2.imencode('.png', frame)
@@ -118,7 +116,7 @@ def process_video(filename, url, framework='torch', no_show=False):
             preds_top5, preds_str = process_response(r, detection)
             top5[model] = preds_top5
             top5_str[model] = preds_str
-            
+
         if error:
             break
 
@@ -139,9 +137,9 @@ def process_video(filename, url, framework='torch', no_show=False):
             cv2.putText(frame, 'Reference Model:', (10, 20),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             for j, det in enumerate(top5_str['ref']):
-                cv2.putText(frame, det, (10, 20 + 15* (j+1)),
+                cv2.putText(frame, det, (10, 20 + 15 * (j+1)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-            
+
             cv2.putText(frame, 'Edge Model:', (10, 500),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
             for j, det in enumerate(top5_str['edge']):
@@ -187,8 +185,7 @@ def process_video(filename, url, framework='torch', no_show=False):
 def offload_video(filename, url, model='edge', framework='torch'):
     print('send video')
     try:
-        headers = {'content-type': 'application/x-www-form-urlencoded'}
-        
+        # headers = {'content-type': 'application/x-www-form-urlencoded'}
         with open(str(filename), 'rb') as video:
             r = requests.post(url,
                               files={'video': video},
@@ -196,48 +193,66 @@ def offload_video(filename, url, model='edge', framework='torch'):
                                   'model': model,
                                   'device': 'cuda',
                                   'framework': framework
-                              })# , headers=headers)
+                              })
         print(r.text)
     except ConnectionResetError:
         return False, None
     except Exception:
         raise
 
-    ts = filename.stem
-
-    date = '-'.join(str(ts).split('-')[:2])
-    hour = str(ts).split('-')[3]
-    minute = str(ts).split('-')[4]
-
     preds = json.loads(r.text)['data']
-    print(preds)
-    sys.exit()
 
     return True, preds
 
-def process_dataset(path, url, 
-                    framework='torch', 
-                    send_video=False, 
+def process_dataset(path, url,
+                    framework='torch',
+                    send_video=False,
                     no_show=False):
 
-    all_data = []
-    for f in path.glob('*.mkv'):
-        if not send_video:
-            ret, data = process_video(f, url, framework, no_show)
-
-            all_data += data
-
-            if not ret:
-                break
-        else:
-            ret, data = offload_video(f, url, framework=framework)
-
     columns = ['timestamp', 'date', 'hour', 'minute', 'frame_id',
-               'top5_ref_classes', 'top5_ref_conf',
-               'top5_edge_classes', 'top5_edge_conf']
+               'model', 'top_classes', 'top_scores']
+    subcolumns = ['frame_id', 'top_classes', 'top_scores']
 
-    detections = pd.DataFrame(all_data, columns=columns)
-    detections.to_csv('detections.csv', sep=',', float_format='.2f', index=False)
+    detections = pd.DataFrame([], columns=columns)
+
+    for f in path.glob('*.mkv'):
+        ts = f.stem
+
+        date = '-'.join(str(ts).split('-')[:2])
+        hour = str(ts).split('-')[3]
+        minute = str(ts).split('-')[4]
+
+        for model in ['edge']:
+            if not send_video:
+                ret, data = process_video(f, url, framework, no_show)
+
+                if not ret:
+                    break
+            else:
+                ret, data = offload_video(f, url, framework=framework)
+
+                # frame_ids = [i for i, _ in enumerate(data)]
+                scores = [','.join(f'{s:.3f}'
+                                   for s in p['scores']) for p in data]
+                classes = [','.join(str(c)
+                                    for c in p['idxs']) for p in data]
+
+                rows = [[i, s, classes[i]] for i, s in enumerate(scores)]
+                df = pd.DataFrame(rows, columns=subcolumns)
+            
+            df['model'] = model
+            df['timestamp'] = ts
+            df['date'] = date
+            df['hour'] = hour
+            df['minute'] = minute
+
+            detections = detections.append(df, ignore_index=True)
+        break
+
+    detections.to_csv('detections.csv',
+                      sep=',',
+                      float_format='.2f',
+                      index=False)
 
 
 def main():

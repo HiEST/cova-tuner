@@ -31,8 +31,12 @@ classes = None
 with open('imagenet.txt', 'r') as c:
     classes = json.load(c)
 
+
 def infer_tf(model, img, device='cpu'):
-    results = run_detector(model, img, model.input_size) 
+    ts0 = time.time()
+    results = run_detector(model, img, model.input_size)
+    ts1 = time.time()
+    print(f'inference took {ts1-ts0:.2f} seconds.')
     return results
 
 
@@ -118,14 +122,13 @@ class Video(Resource):
         parser.add_argument('framework', required=True)
         parser.add_argument('video', type=FileStorage, location='files')
 
- 
         args = parser.parse_args()
 
         if args.model not in ['edge', 'ref']:
             return {
                 'message': 'Invalid model.'
             }, 401
-        
+ 
         if args.device not in ['cpu', 'cuda']:
             return {
                 'message': 'Invalid device.'
@@ -136,9 +139,6 @@ class Video(Resource):
                 'message': 'Invalid framework.'
             }, 401
 
-        # video = base64.b64decode(args.file)
-        # nparr = np.frombuffer(video, np.uint8)
-        # img = cv2.imdecode(nparr, flags=1)
         tf = tempfile.NamedTemporaryFile(delete=True)
         args.video.save(tf)
 
@@ -157,8 +157,14 @@ class Video(Resource):
             else:
                 preds = infer_tf(m, frame, args.device)
                 data.append(get_top_tf(preds))
-                
+ 
+            frame_id += 1
+
+            if frame_id == 10:
+                break 
+
             ret, frame = cap.read()
+
 
         return Response(
             response=json.dumps({
@@ -260,7 +266,6 @@ def main():
     if config.framework == 'torch':
         models['edge'] = mobilenet_v2(pretrained=True)
         models['ref'] = resnet152(pretrained=True)
-        # models['ref'] = faster_rcnn(pretrained=True)
 
         devices = {}
         if torch.cuda.is_available():
@@ -275,17 +280,12 @@ def main():
     elif config.framework == 'tf':
         ref_model = 'Faster R-CNN Inception ResNet V2 1024x1024'
         models['edge'] = init_detector()
-        # models['ref'] = init_detector()
-        # models['ref'] = init_detector(ref_model)
-        # print(models['ref'])
+        models['ref'] = init_detector(ref_model)
         models['edge'].input_size = (320, 320)
-        # models['ref'].input_size = (320, 320)
-        # models['ref'].input_size = (1024, 1024)
+        models['ref'].input_size = (1024, 1024)
 
     app.run(port=config.port)
     
 
 if __name__ == '__main__':
     main()
-    # app.run()
-  
