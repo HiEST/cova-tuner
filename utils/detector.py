@@ -1,5 +1,6 @@
 import datetime
 import time
+import os
 
 import numpy as np
 import cv2
@@ -58,7 +59,8 @@ ALL_MODELS = {
 }
 
 label_map = {}
-with open('./mscoco.json') as labels:
+cwd = os.path.dirname(os.path.realpath(__file__))
+with open(f'{cwd}/../mscoco.json') as labels:
     label_map = json.load(labels)
 
 COCO17_HUMAN_POSE_KEYPOINTS = [(0, 1),
@@ -125,9 +127,9 @@ def draw_boxes(frame, boxes, class_names, scores,
             cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
     return frame, detections_str
 
-def run_detector(detector, roi):
+def run_detector(detector, roi, input_size=(320, 320)):
 
-    img = imutils.resize(roi, width=320, height=320)
+    img = imutils.resize(roi, width=input_size[0], height=input_size[1])
     converted_img  = tf.image.convert_image_dtype(img, tf.uint8)[tf.newaxis, ...]
     
     result = detector(converted_img)
