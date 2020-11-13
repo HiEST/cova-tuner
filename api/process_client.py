@@ -2,13 +2,20 @@
 # -*- coding: utf-8 -*-
 import argparse
 import base64
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
+from itertools import product
 import json
-import sys
+import os
 from pathlib import Path
+import shutil
+import sys
+import time
 
 import cv2
 import pandas as pd
 import requests
+from tqdm import tqdm
 
 sys.path.append('../')
 from utils.detector import label_map
@@ -48,7 +55,6 @@ def draw_bboxes(img, preds, max_boxes=5, min_score=.5, color=(255, 0, 0)):
 
 def process_response(response, detection=False):
     top5_str = []
-    print(response)
     preds = json.loads(response.text)['data']
     if detection:
         boxes = preds['boxes']
@@ -79,7 +85,7 @@ def process_response(response, detection=False):
         top5 = [classes, confs]
 
 
-def process_video(filename, url, framework='torch', no_show=False):
+def offload_video_frames(filename, url, framework='torch', no_show=False):
     detection = True if framework == 'tf' else False
 
     ts = filename.stem
@@ -183,10 +189,9 @@ def process_video(filename, url, framework='torch', no_show=False):
 
 
 def offload_video(filename, url, model='edge', framework='torch'):
-    print('send video')
+    print(f'Processing {filename} with model {model}')
     try:
-        # headers = {'content-type': 'application/x-www-form-urlencoded'}
-        with open(str(filename), 'rb') as video:
+        with open(filename, 'rb') as video:
             r = requests.post(url,
                               files={'video': video},
                               data={
@@ -194,7 +199,6 @@ def offload_video(filename, url, model='edge', framework='torch'):
                                   'device': 'cuda',
                                   'framework': framework
                               })
-        print(r.text)
     except ConnectionResetError:
         return False, None
     except Exception:
@@ -204,10 +208,59 @@ def offload_video(filename, url, model='edge', framework='torch'):
 
     return True, preds
 
-def process_dataset(path, url,
+
+def offload_video_threading(query_args):
+    filename, url, model, framework = query_args
+    ret, data = offload_video(filename, url, model, framework)
+    return ret, model, data
+
+
+def process_video(args):
+    filename, url, model = args[:3]
+    framework, offload_frames = args[3:5]
+    no_show, max_workers = args[5:7]
+
+    ts0 = time.time()
+    if offload_frames:
+        ret, data = offload_video_frames(
+            filename=filename,
+            url=url,
+            framework=framework,
+            model=model,
+            no_show=no_show
+        )
+
+    else:
+        ret, data = offload_video(filename=filename, url=url,
+                                  model=model, framework=framework)
+
+    assert ret
+    scores = [','.join(f'{s:.3f}'
+                       for s in p['scores']) for p in data]
+    classes = [','.join(str(c)
+                        for c in p['idxs']) for p in data]
+
+    rows = [[i, s, classes[i]] for i, s in enumerate(scores)]
+
+    ts1 = time.time()
+    print(f'Time to process video {filename} '
+          f'for model {model}: {ts1-ts0:.2f} seconds.')
+    return rows
+
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+
+def process_dataset(dataset, url,
                     framework='torch',
-                    send_video=False,
-                    no_show=False):
+                    offload_frames=False,
+                    no_show=False,
+                    process_all=True,
+                    move_when_done=None,
+                    max_workers=1):
 
     columns = ['timestamp', 'date', 'hour', 'minute', 'frame_id',
                'model', 'top_classes', 'top_scores']
@@ -215,31 +268,48 @@ def process_dataset(path, url,
 
     detections = pd.DataFrame([], columns=columns)
 
-    for f in path.glob('*.mkv'):
+    processed_ts = defaultdict(bool)
+
+    models = ['ref', 'edge']
+    videos = []
+    for f in dataset:
         ts = f.stem
 
-        date = '-'.join(str(ts).split('-')[:2])
-        hour = str(ts).split('-')[3]
-        minute = str(ts).split('-')[4]
+        date = '-'.join(ts.split('-')[:2])
+        hour = ts.split('-')[3]
+        minute = ts.split('-')[4]
 
-        for model in ['edge']:
-            if not send_video:
-                ret, data = process_video(f, url, framework, no_show)
-
-                if not ret:
-                    break
+        if not process_all:
+            date_hour = f'{date}-{hour}'
+            if processed_ts[date_hour]:
+                # print(f'Skipping processing {f.stem} because'
+                #       f'{processed_ts[date_hour]} has been already processed.')
+                continue
             else:
-                ret, data = offload_video(f, url, framework=framework)
+                videos.append(str(f))
+                processed_ts[date_hour] = f.stem
 
-                # frame_ids = [i for i, _ in enumerate(data)]
-                scores = [','.join(f'{s:.3f}'
-                                   for s in p['scores']) for p in data]
-                classes = [','.join(str(c)
-                                    for c in p['idxs']) for p in data]
+    query_args = [
+        [
+            video, url, model,
+            framework, offload_frames,
+            no_show, max_workers
+        ]
+        for video, model in product(videos, models)
+    ]
 
-                rows = [[i, s, classes[i]] for i, s in enumerate(scores)]
-                df = pd.DataFrame(rows, columns=subcolumns)
-            
+    query_chunks = chunks(query_args, max_workers)
+
+    videos_processed = defaultdict(int)
+    for chunk in query_chunks:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(process_video, chunk)
+
+        for r_idx, r in enumerate(results):
+            filename = chunk[r_idx][0]
+            model = chunk[r_idx][2]
+            ts = Path(filename).stem
+            df = pd.DataFrame(r, columns=subcolumns)
             df['model'] = model
             df['timestamp'] = ts
             df['date'] = date
@@ -247,7 +317,22 @@ def process_dataset(path, url,
             df['minute'] = minute
 
             detections = detections.append(df, ignore_index=True)
-        break
+            detections.to_csv('detections.tmp.csv',
+                              sep=',',
+                              float_format='.2f',
+                              index=False)
+
+            videos_processed[filename] += 1
+
+        if move_when_done is not None:
+            videos_done = [
+                k 
+                for k, v in videos_processed.items()
+                if v == len(models)
+            ]
+
+            for v in videos_done:
+                shutil.move(v, move_when_done)
 
     detections.to_csv('detections.csv',
                       sep=',',
@@ -267,27 +352,52 @@ def main():
                       default=5000,
                       type=int,
                       help="Port to connect to.")
+
     args.add_argument("-f", "--framework",
                       default='torch',
                       choices=['torch', 'tf'],
                       help="Framework to use")
-    
-    args.add_argument("--send-video",
+
+    args.add_argument("--offload-frames",
                       default=False,
                       action="store_true",
-                      help="Send whole video instead of frame by frame")
-    
+                      help="Offload frame by frame instead of the whole video")
+
     args.add_argument("--no-show",
                       default=False,
                       action="store_true",
                       help="Don't show results in a window.")
 
+    args.add_argument("--fast",
+                      default=False,
+                      action="store_true",
+                      help="Processes one video per hour "
+                      "instead of the whole dataset.")
+
+    args.add_argument("--move",
+                      default=None,
+                      type=str,
+                      help="If specified, videos are moved "
+                      "to this path after processing.")
+
+    args.add_argument("-m", "--max-workers",
+                      default=1,
+                      type=int,
+                      help="Max. workers to send parallel requests.")
+
     config = args.parse_args()
-    url = url.format(config.port, 'video' if config.send_video else 'infer')
+    url = url.format(config.port, 'infer' if config.offload_frames else 'video')
 
     path = Path(config.input)
-    process_dataset(path, url, config.framework,
-                    config.send_video, config.no_show)
+    dataset = sorted([f for f in path.glob('*.mkv')], key=os.path.getmtime)
+    process_dataset(dataset, url,
+                    framework=config.framework,
+                    offload_frames=config.offload_frames,
+                    no_show=config.no_show,
+                    process_all=(not config.fast),
+                    move_when_done=config.move,
+                    max_workers=config.max_workers)
+
 
 if __name__ == '__main__':
     main()
