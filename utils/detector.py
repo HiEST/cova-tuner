@@ -10,6 +10,8 @@ import tensorflow as tf
 import tensorflow_hub as hub
 import json
 
+from utils.datasets import MSCOCO as label_map
+
 COLOR_GOOD_CLASSIF = (255, 0, 255)
 COLOR_POOR_CLASSIF = (255, 255, 255)
 COLOR_DETECTION = (0, 0, 255)
@@ -57,11 +59,6 @@ ALL_MODELS = {
 'Faster R-CNN Inception ResNet V2 1024x1024' : 'https://tfhub.dev/tensorflow/faster_rcnn/inception_resnet_v2_1024x1024/1',
 'Mask R-CNN Inception ResNet V2 1024x1024' : 'https://tfhub.dev/tensorflow/mask_rcnn/inception_resnet_v2_1024x1024/1'
 }
-
-label_map = {}
-cwd = os.path.dirname(os.path.realpath(__file__))
-with open(f'{cwd}/../mscoco.json') as labels:
-    label_map = json.load(labels)
 
 COCO17_HUMAN_POSE_KEYPOINTS = [(0, 1),
  (0, 2),

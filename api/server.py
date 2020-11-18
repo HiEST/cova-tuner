@@ -3,6 +3,7 @@
 import argparse
 import base64
 import json
+import sys
 import tempfile
 import time
 
@@ -16,18 +17,17 @@ from torchvision.models import mobilenet_v2, resnet152
 from torchvision.models.detection import faster_rcnn
 from werkzeug.datastructures import FileStorage
 
-from ..utils.detector import init_detector, run_detector
-from ..utils.detector import ALL_MODELS as TF_MODELS
+sys.path.append('../')
+from utils.detector import init_detector, run_detector
+from utils.detector import ALL_MODELS as TF_MODELS
 
 app = Flask(__name__)
 api = Api(app)
 
+videos = {}
+video_results = {}
 models = {}
 framework = 'torch'
-
-classes = None
-with open('../aux/imagenet.txt', 'r') as c:
-    classes = json.load(c)
 
 
 def infer_tf(model, img, device='cpu'):
@@ -86,6 +86,32 @@ def get_top_tf(preds, topn=10):
     return top
 
 
+def process_video(filename, model, device, framework):
+    cap = cv2.VideoCapture(filename)
+    ret, frame = cap.read()
+    frame_id = 0
+    m = models[model]
+
+    data = []
+    while ret:
+        if framework == 'torch':
+            device = device if device == 'cpu' else devices[model]
+            preds = infer_torch(m, frame, device)
+            data.append(get_top_torch(preds))
+
+        else:
+            preds = infer_tf(m, frame, device)
+            data.append(get_top_tf(preds))
+
+        frame_id += 1
+
+        # FIXME: Remove before commit
+        if frame_id == 10:
+            break
+
+        ret, frame = cap.read()
+
+    return data
 
 class Models(Resource):
     def get(self):
@@ -112,13 +138,48 @@ class Models(Resource):
 
 
 class Video(Resource):
+    def get(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument('video', required=True)
+        parser.add_argument('model', required=True)
+        args = parser.parse_args()
+
+        if args.video not in videos.keys():
+            return {'data': ['video not loaded', []]}, 200
+
+        if args.model not in video_results[args.video].keys():
+            return {'data': ['model not requested', []]}, 200
+
+        status, data = video_results[args.video][args.model]
+        return {'data': [status, data]}, 200
+
+    def put(self):
+        parser = reqparse.RequestParser()
+        parser.add_argument('video', required=True)
+        parser.add_argument('overwrite', default=False, type=bool, required=False)
+        parser.add_argument('file', type=FileStorage, location='files')
+        args = parser.parse_args()
+
+        if not args.overwrite and args.video in videos.keys():
+            print(f'{args.video} already in server')
+            return {}, 204
+
+        tf = tempfile.NamedTemporaryFile(delete=False)
+        args.file.save(tf)
+        videos[args.video] = tf
+        video_results[args.video] = {}
+
+        print(f'stored {args.video} in {tf.name}')
+        return {}, 204
+
     def post(self):
         parser = reqparse.RequestParser()
 
         parser.add_argument('model', required=True)
         parser.add_argument('device', required=True)
         parser.add_argument('framework', required=True)
-        parser.add_argument('video', type=FileStorage, location='files')
+        parser.add_argument('video', required=True)
+        # parser.add_argument('video', type=FileStorage, location='files')
 
         args = parser.parse_args()
 
@@ -126,7 +187,7 @@ class Video(Resource):
             return {
                 'message': 'Invalid model.'
             }, 401
- 
+
         if args.device not in ['cpu', 'cuda']:
             return {
                 'message': 'Invalid device.'
@@ -137,32 +198,34 @@ class Video(Resource):
                 'message': 'Invalid framework.'
             }, 401
 
-        tf = tempfile.NamedTemporaryFile(delete=True)
-        args.video.save(tf)
+        if args.video not in videos.keys():
+            return {
+                'message': 'Video does not exist.'
+            }, 401
 
-        cap = cv2.VideoCapture(tf.name)
-        ret, frame = cap.read()
-        frame_id = 0
-        m = models[args.model]
-
-        data = []
-        while ret:
-            if args.framework == 'torch':
-                device = args.device if args.device == 'cpu' else devices[args.model]
-                preds = infer_torch(m, frame, device)
-                data.append(get_top_torch(preds))
+        if args.model in video_results[args.video].keys():
+            status, data = video_results[args.video][args.model]
+            if status == 'ready':
+                return Response(
+                    response=json.dumps({
+                        "data": data
+                    }),
+                    status=200,
+                    mimetype='application/json'
+                )
 
             else:
-                preds = infer_tf(m, frame, args.device)
-                data.append(get_top_tf(preds))
- 
-            frame_id += 1
+                print(f'Accepted a new request for {args.video} and model {args.model}')
 
-            if frame_id == 10:
-                break 
+        # tf = tempfile.NamedTemporaryFile(delete=True)
+        # args.video.save(tf)
+        tf = videos[args.video]
 
-            ret, frame = cap.read()
+        video_results[args.video][args.model] = ['running', []]
+        data = process_video(tf.name, args.model,
+                      args.device, args.framework)
 
+        video_results[args.video][args.model] = ['ready', data]
 
         return Response(
             response=json.dumps({
@@ -278,9 +341,11 @@ def main():
     elif config.framework == 'tf':
         ref_model = 'Faster R-CNN Inception ResNet V2 1024x1024'
         models['edge'] = init_detector()
-        models['ref'] = init_detector(ref_model)
+        # models['ref'] = init_detector(ref_model)
         models['edge'].input_size = (320, 320)
-        models['ref'].input_size = (1024, 1024)
+        # models['ref'].input_size = (1024, 1024)
+        models['ref'] = init_detector()
+        models['ref'].input_size = (320, 320)
 
     app.run(port=config.port)
     

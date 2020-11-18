@@ -132,9 +132,13 @@ def offload_video(filename, url, model='edge', framework='torch'):
     print(f'Processing {filename} with model {model}')
     try:
         with open(filename, 'rb') as video:
+            r = requests.put(url,
+                             files={'file': video},
+                             data={'video': filename})
+
             r = requests.post(url,
-                              files={'video': video},
                               data={
+                                  'video': filename,
                                   'model': model,
                                   'device': 'cuda',
                                   'framework': framework
@@ -211,6 +215,7 @@ def process_dataset(dataset, url, dataset_name,
                     process_all=True,
                     move_when_done=None,
                     max_workers=1):
+                    # checkpoint=None):
 
     columns = ['cam', 'timestamp', 'date', 'hour', 'minute', 'frame_id',
                'model', 'top_scores', 'top_classes']
@@ -219,6 +224,16 @@ def process_dataset(dataset, url, dataset_name,
     detections = pd.DataFrame([], columns=columns)
 
     processed_ts = defaultdict(bool)
+
+    videos_processed = defaultdict(int)
+    # ckpt = None
+    # if checkpoint is not None:
+    #     ckpt = pd.read_csv(checkpoint)
+    #     for cam in ckpt.cam.unique():
+    #         for ts in ckpt.timestamp.unique():
+    #             videos_proocessed[f'{ts}.{cam}.mkv'] += 1
+
+    #     print(videos_processed)
 
     models = ['ref', 'edge']
     videos = []
@@ -248,7 +263,6 @@ def process_dataset(dataset, url, dataset_name,
         for video, model in product(videos, models)
     ]
 
-    videos_processed = defaultdict(int)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         results = executor.map(process_video, query_args)
 
@@ -276,15 +290,7 @@ def process_dataset(dataset, url, dataset_name,
             print(f'Results from {filename} just processed.')
 
             videos_processed[filename] += 1
-
-        if move_when_done is not None:
-            videos_done = [
-                k
-                for k, v in videos_processed.items()
-                if v == len(models)
-            ]
-
-            for v in videos_done:
+            if videos_processed[filename] == len(models):
                 shutil.move(v, move_when_done)
                 del videos_processed[v]
 
