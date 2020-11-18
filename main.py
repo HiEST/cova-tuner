@@ -27,7 +27,6 @@ from utils.capture_screen import CaptureScreen
 from utils.constants import *
 
 
-
 def open_video(video):
     # if the video argument is None, then we are reading from webcam
     if video is None:

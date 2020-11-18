@@ -80,7 +80,9 @@ def propose_rois(boxes, roi_width=256, roi_height=256, max_width=1920, max_heigh
 
     
     if len(boxes) > 1:
+        print(boxes)
         boxes = non_max_suppression_fast(boxes)
+        print(boxes)
 
     # boxes = merge_near_boxes(boxes)
 
@@ -263,7 +265,10 @@ class MotionDetection:
 
 
         if self.merge_rois and len(boxes) >= 1:
-            boxes = propose_rois(boxes)
+            max_height, max_width, _ = frame.shape
+            boxes = propose_rois(boxes,
+                                 max_width=max_width,
+                                 max_height=max_height)
 
         return boxes
         

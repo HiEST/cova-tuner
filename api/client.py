@@ -196,7 +196,15 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 
-def process_dataset(dataset, url,
+def split_date(ts):
+    date = str(ts.date())
+    hour = str(ts.hour)
+    minute = str(ts.minute)
+
+    return date, hour, minute
+
+
+def process_dataset(dataset, url, dataset_name,
                     framework='torch',
                     offload_frames=False,
                     no_show=False,
@@ -204,9 +212,9 @@ def process_dataset(dataset, url,
                     move_when_done=None,
                     max_workers=1):
 
-    columns = ['timestamp', 'date', 'hour', 'minute', 'frame_id',
-               'model', 'top_classes', 'top_scores']
-    subcolumns = ['frame_id', 'top_classes', 'top_scores']
+    columns = ['cam', 'timestamp', 'date', 'hour', 'minute', 'frame_id',
+               'model', 'top_scores', 'top_classes']
+    subcolumns = ['frame_id', 'top_scores', 'top_classes']
 
     detections = pd.DataFrame([], columns=columns)
 
@@ -218,13 +226,11 @@ def process_dataset(dataset, url,
         videos = [str(f) for f in dataset]
     else:
         for f in dataset:
-            ts = f.stem
+            ts = f.stem.split('.')[0]
+            cam = f.stem.split('.')[1]
+            date, hour, minute = split_date(ts)
 
-            date = '-'.join(ts.split('-')[:2])
-            hour = ts.split('-')[3]
-            minute = ts.split('-')[4]
-
-            date_hour = f'{date}-{hour}'
+            date_hour = f'[{cam}] {date}:{hour}'
             if processed_ts[date_hour]:
                 continue
             else:
@@ -242,21 +248,19 @@ def process_dataset(dataset, url,
         for video, model in product(videos, models)
     ]
 
-    query_chunks = chunks(query_args, max_workers)
     videos_processed = defaultdict(int)
-    for chunk in query_chunks:
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            results = executor.map(process_video, chunk)
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        results = executor.map(process_video, query_args)
 
         for r_idx, r in enumerate(results):
-            filename = chunk[r_idx][0]
-            model = chunk[r_idx][2]
-            ts = Path(filename).stem
-            date = '-'.join(ts.split('-')[:2])
-            hour = ts.split('-')[3]
-            minute = ts.split('-')[4]
+            filename = query_args[r_idx][0]
+            model = query_args[r_idx][2]
+            ts = Path(filename).stem.split('.')[0]
+            cam = Path(filename).stem.split('.')[1]
+            date, hour, minute = split_date(ts)
 
             df = pd.DataFrame(r, columns=subcolumns)
+            df['cam'] = cam
             df['model'] = model
             df['timestamp'] = ts
             df['date'] = date
@@ -264,16 +268,18 @@ def process_dataset(dataset, url,
             df['minute'] = minute
 
             detections = detections.append(df, ignore_index=True)
-            detections.to_csv('detections.tmp.csv',
+            detections.to_csv(f'{dataset_name}.tmp.csv',
                               sep=',',
                               float_format='.2f',
                               index=False)
+
+            print(f'Results from {filename} just processed.')
 
             videos_processed[filename] += 1
 
         if move_when_done is not None:
             videos_done = [
-                k 
+                k
                 for k, v in videos_processed.items()
                 if v == len(models)
             ]
@@ -282,7 +288,7 @@ def process_dataset(dataset, url,
                 shutil.move(v, move_when_done)
                 del videos_processed[v]
 
-    detections.to_csv('detections.csv',
+    detections.to_csv(f'{dataset_name}.csv',
                       sep=',',
                       float_format='.2f',
                       index=False)
@@ -295,6 +301,11 @@ def main():
                       default="./",
                       type=str,
                       help="Path to the dataset to process.")
+
+    args.add_argument("-n", "--name",
+                      default="dataset",
+                      type=str,
+                      help="Name of the dataset. Used to name the results file.")
 
     args.add_argument("-p", "--port",
                       default=5000,
@@ -340,8 +351,12 @@ def main():
     if os.path.isfile(config.input):
         dataset = [path]
     else:
-        dataset = sorted([f for f in path.glob('*.mkv')], key=os.path.getmtime)
+        extensions = ['.mkv', '.mp4', '.webm']
+        dataset = sorted([f for f in path.rglob('*') if f.suffix in extensions], key=os.path.getmtime)
+
+    print(dataset)
     process_dataset(dataset, url,
+                    dataset_name=config.name,
                     framework=config.framework,
                     offload_frames=config.offload_frames,
                     no_show=config.no_show,

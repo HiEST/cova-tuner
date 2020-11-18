@@ -3,7 +3,6 @@
 import argparse
 import base64
 import json
-import sys
 import tempfile
 import time
 
@@ -17,9 +16,8 @@ from torchvision.models import mobilenet_v2, resnet152
 from torchvision.models.detection import faster_rcnn
 from werkzeug.datastructures import FileStorage
 
-sys.path.append('..')
-from utils.detector import init_detector, run_detector
-from utils.detector import ALL_MODELS as TF_MODELS
+from ..utils.detector import init_detector, run_detector
+from ..utils.detector import ALL_MODELS as TF_MODELS
 
 app = Flask(__name__)
 api = Api(app)
@@ -28,7 +26,7 @@ models = {}
 framework = 'torch'
 
 classes = None
-with open('imagenet.txt', 'r') as c:
+with open('../aux/imagenet.txt', 'r') as c:
     classes = json.load(c)
 
 
