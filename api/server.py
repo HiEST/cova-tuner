@@ -105,10 +105,6 @@ def process_video(filename, model, device, framework):
 
         frame_id += 1
 
-        # FIXME: Remove before commit
-        if frame_id == 10:
-            break
-
         ret, frame = cap.read()
 
     return data
@@ -272,7 +268,6 @@ class Infer(Resource):
 
         png_img = base64.b64decode(args.img)
         nparr = np.frombuffer(png_img, np.uint8)
-        # import pdb; pdb.set_trace()
         img = cv2.imdecode(nparr, flags=1)
 
         m = models[args.model]
@@ -341,11 +336,9 @@ def main():
     elif config.framework == 'tf':
         ref_model = 'Faster R-CNN Inception ResNet V2 1024x1024'
         models['edge'] = init_detector()
-        # models['ref'] = init_detector(ref_model)
+        models['ref'] = init_detector(ref_model)
         models['edge'].input_size = (320, 320)
-        # models['ref'].input_size = (1024, 1024)
-        models['ref'] = init_detector()
-        models['ref'].input_size = (320, 320)
+        models['ref'].input_size = (1024, 1024)
 
     app.run(port=config.port)
     
