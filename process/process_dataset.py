@@ -98,7 +98,6 @@ def infer_video(filename, model, device, framework):
         frame_id += 1
 
         ret, frame = cap.read()
-        break
 
     return data
 
@@ -290,10 +289,10 @@ def main():
     elif config.framework == 'tf':
         ref_model = 'Faster R-CNN Inception ResNet V2 1024x1024'
         models['edge'] = init_detector()
-        # models['ref'] = init_detector(ref_model)
+        models['ref'] = init_detector(ref_model)
         models['edge'].input_size = (320, 320)
-        # models['ref'].input_size = (1024, 1024)
-        models['ref'] = models['edge']
+        models['ref'].input_size = (1024, 1024)
+        # models['ref'] = models['edge']
         devices['edge'] = 'cpu'
         devices['ref'] = devices['edge']
 
