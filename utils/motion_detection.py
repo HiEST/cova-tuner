@@ -80,9 +80,7 @@ def propose_rois(boxes, roi_width=256, roi_height=256, max_width=1920, max_heigh
 
     
     if len(boxes) > 1:
-        print(boxes)
         boxes = non_max_suppression_fast(boxes)
-        print(boxes)
 
     # boxes = merge_near_boxes(boxes)
 
