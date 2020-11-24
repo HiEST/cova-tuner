@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import sys
+import time
 
 import cv2
 import numpy as np
@@ -21,6 +22,8 @@ detector = None
 
 
 def process_video_motion(video, no_merge_rois=False, min_area=500, no_average=False):
+    print(f'Processing {video}')
+    t0 = time.time()
     background = Background(
         no_average=no_average,
         skip=1,
@@ -58,7 +61,8 @@ def process_video_motion(video, no_merge_rois=False, min_area=500, no_average=Fa
         frame_id += 1
 
     skipped_frames = frame_id-frames_with_motion
-    print(f'{video}')
+    t1 = time.time()
+    print(f'{video} in {t1-t0:.2f} seconds')
     print(f'\tnum_frames: {frame_id}')
     print(f'\tskipped_frames: {skipped_frames} ({skipped_frames/frame_id:.2f})')
     print(f'\tframes_with_motion: {frames_with_motion}')
