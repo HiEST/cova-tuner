@@ -175,7 +175,8 @@ class Video(Resource):
         parser.add_argument('device', required=True)
         parser.add_argument('framework', required=True)
         parser.add_argument('video', required=True)
-        # parser.add_argument('video', type=FileStorage, location='files')
+        parser.add_argument('save_video', default=False, required=False)
+        parser.add_argument('file', type=FileStorage, location='files')
 
         args = parser.parse_args()
 
@@ -193,6 +194,12 @@ class Video(Resource):
             return {
                 'message': 'Invalid framework.'
             }, 401
+
+        if args.save_video:
+            tf = tempfile.NamedTemporaryFile(delete=False)
+            args.file.save(tf)
+            videos[args.video] = tf
+            video_results[args.video] = {}
 
         if args.video not in videos.keys():
             return {
@@ -213,8 +220,6 @@ class Video(Resource):
             else:
                 print(f'Accepted a new request for {args.video} and model {args.model}')
 
-        # tf = tempfile.NamedTemporaryFile(delete=True)
-        # args.video.save(tf)
         tf = videos[args.video]
 
         video_results[args.video][args.model] = ['running', []]

@@ -107,8 +107,6 @@ def offload_single_frame(img, url, model, framework):
 def offload_video_frames(filename, url, model,
                          framework='torch', no_show=False):
 
-    # detection = True if framework == 'tf' else False
-
     cap = cv2.VideoCapture(filename)
     frame_id = 0
     ret, frame = cap.read()
@@ -131,24 +129,45 @@ def offload_video_frames(filename, url, model,
 def offload_video(filename, url, model='edge', framework='torch'):
     print(f'Processing {filename} with model {model}')
     try:
-        with open(filename, 'rb') as video:
-            r = requests.put(url,
-                             files={'file': video},
-                             data={'video': filename})
+        servers = ['http://localhost:5000/video', 'http://localhost:5001/video']
+        upload_video = False
+        for server in servers:
+            r = requests.get(server,
+                             data={
+                                'video': filename,
+                                'model': model})
 
-            r = requests.post(url,
-                              data={
-                                  'video': filename,
-                                  'model': model,
-                                  'device': 'cuda',
-                                  'framework': framework
-                              })
+            status, data = json.loads(r.text)['data']
+            if status == 'ready':
+                print(f'{filename} was already processed and got immediate results.')
+                return True, data
+
+            if server == url and status == 'video not loaded':
+                upload_video = True
+
+        if upload_video:
+            print(f'[{url}] Uploading {filename}')
+            with open(filename, 'rb') as video:
+                r = requests.put(url,
+                                 files={'file': video},
+                                 data={'video': filename})
+
+        print(f'[{url}] Request on {filename} - {model}')
+        r = requests.post(url,
+                          data={
+                              'video': filename,
+                              'model': model,
+                              'device': 'cuda',
+                              'framework': framework
+                          })
+    
+        preds = json.loads(r.text)['data']
+
     except ConnectionResetError:
         return False, None
     except Exception:
         raise
 
-    preds = json.loads(r.text)['data']
 
     return True, preds
 
@@ -180,6 +199,9 @@ def process_video(args):
         ret, data = offload_video(filename=filename, url=url,
                                   model=model, framework=framework)
 
+        if not ret:
+            return []
+
     assert ret
     scores = [','.join(f'{s:.3f}'
                        for s in p['scores']) for p in data]
@@ -201,6 +223,7 @@ def chunks(lst, n):
 
 
 def split_date(ts):
+    ts = pd.to_datetime(ts)
     date = str(ts.date())
     hour = str(ts.hour)
     minute = str(ts.minute)
@@ -226,15 +249,6 @@ def process_dataset(dataset, url, dataset_name,
     processed_ts = defaultdict(bool)
 
     videos_processed = defaultdict(int)
-    # ckpt = None
-    # if checkpoint is not None:
-    #     ckpt = pd.read_csv(checkpoint)
-    #     for cam in ckpt.cam.unique():
-    #         for ts in ckpt.timestamp.unique():
-    #             videos_proocessed[f'{ts}.{cam}.mkv'] += 1
-
-    #     print(videos_processed)
-
     models = ['ref', 'edge']
     videos = []
     if process_all:
@@ -269,6 +283,9 @@ def process_dataset(dataset, url, dataset_name,
         for r_idx, r in enumerate(results):
             filename = query_args[r_idx][0]
             model = query_args[r_idx][2]
+            if len(r) == 0:
+                print(f'0 results for {filename} with model {model}')
+                continue
             ts = Path(filename).stem.split('.')[0]
             cam = Path(filename).stem.split('.')[1]
             date, hour, minute = split_date(ts)
@@ -282,6 +299,8 @@ def process_dataset(dataset, url, dataset_name,
             df['minute'] = minute
 
             detections = detections.append(df, ignore_index=True)
+            print(f'{len(detections)} detections.')
+            print(f'Writing results to {dataset_name}.tmp.csv')
             detections.to_csv(f'{dataset_name}.tmp.csv',
                               sep=',',
                               float_format='.2f',
@@ -291,8 +310,8 @@ def process_dataset(dataset, url, dataset_name,
 
             videos_processed[filename] += 1
             if videos_processed[filename] == len(models):
-                shutil.move(v, move_when_done)
-                del videos_processed[v]
+                shutil.move(filename, move_when_done)
+                del videos_processed[filename]
 
     detections.to_csv(f'{dataset_name}.csv',
                       sep=',',
@@ -360,7 +379,6 @@ def main():
         extensions = ['.mkv', '.mp4', '.webm']
         dataset = sorted([f for f in path.rglob('*') if f.suffix in extensions], key=os.path.getmtime)
 
-    print(dataset)
     process_dataset(dataset, url,
                     dataset_name=config.name,
                     framework=config.framework,
