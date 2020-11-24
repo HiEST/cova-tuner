@@ -23,7 +23,7 @@ detector = None
 def process_video_motion(video, no_merge_rois=False, min_area=500, no_average=False):
     background = Background(
         no_average=no_average,
-        skip=10,
+        skip=1,
         take=10,
         use_last=15,
     )
@@ -55,26 +55,14 @@ def process_video_motion(video, no_merge_rois=False, min_area=500, no_average=Fa
                 data.append([frame_id, top_preds['scores'], top_preds['idxs']])
 
         ret, frame = cap.read()
-
-        if frame_id == 100:
-            # print(f'\tnum_frames: {frame_id}')
-            # print(f'\tframes_with_motion: {frames_with_motion}')
-            # print(f'\tinfers_per_frame:')
-            # print(f'\t\tmax: {max(infers_per_frame)}')
-            # print(f'\t\tavg: {np.average(infers_per_frame)}')
-            # print(f'\t\t99%: {np.percentile(infers_per_frame, 99)}')
-            break
         frame_id += 1
+        if frame_id == 100:
+            break
 
-    # results = {
-    #     'num_frames': frame_id,
-    #     'frames_with_motion': frames_with_motion,
-    #     'infer_per_frame': infers_per_frame,
-    #     'data': data
-    # }
-    # return results 
+    skipped_frames = frame_id-frames_with_motion
     print(f'{video}')
     print(f'\tnum_frames: {frame_id}')
+    print(f'\tskipped_frames: {skipped_frames} ({skipped_frames/frame_id:.2f})')
     print(f'\tframes_with_motion: {frames_with_motion}')
     print(f'\tinfers_per_frame:')
     print(f'\t\tmax: {max(infers_per_frame)}')
