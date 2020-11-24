@@ -56,8 +56,6 @@ def process_video_motion(video, no_merge_rois=False, min_area=500, no_average=Fa
 
         ret, frame = cap.read()
         frame_id += 1
-        if frame_id == 100:
-            break
 
     skipped_frames = frame_id-frames_with_motion
     print(f'{video}')
