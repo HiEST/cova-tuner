@@ -190,7 +190,7 @@ def process_dataset(dataset, dataset_name,
 
             for r_idx, r in enumerate(results):
                 filename = chunk[r_idx][0]
-                model = chunk[r_idx][2]
+                model = chunk[r_idx][1]
                 if len(r) == 0:
                     print(f'0 results for {filename} with model {model}')
                     continue
