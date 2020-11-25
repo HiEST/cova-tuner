@@ -251,7 +251,7 @@ def main():
                       choices=['edge', 'ref'],
                       help="Model to use")
 
-   args.add_argument("-f", "--framework",
+    args.add_argument("-f", "--framework",
                       default='torch',
                       choices=['torch', 'tf'],
                       help="Framework to use")
