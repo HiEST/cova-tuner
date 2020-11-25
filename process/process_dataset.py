@@ -149,6 +149,7 @@ def split_date(ts):
 
 
 def process_dataset(dataset, dataset_name,
+                    model='edge',
                     framework='torch',
                     process_all=True,
                     move_when_done=None,
@@ -181,8 +182,12 @@ def process_dataset(dataset, dataset_name,
 
     query_args = [
         [video, model, framework]
-        for video, model in product(videos, models.keys())
+        for video in videos
     ]
+    # query_args = [
+    #     [video, model, framework]
+    #     for video, model in product(videos, models.keys())
+    # ]
 
     for chunk_idx, chunk in enumerate(chunks(query_args, max_workers*2)):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -190,7 +195,7 @@ def process_dataset(dataset, dataset_name,
 
             for r_idx, r in enumerate(results):
                 filename = chunk[r_idx][0]
-                model = chunk[r_idx][1]
+                # model = chunk[r_idx][1]
                 if len(r) == 0:
                     print(f'0 results for {filename} with model {model}')
                     continue
@@ -241,7 +246,12 @@ def main():
                       type=str,
                       help="Name of the dataset. Used to name the results file.")
 
-    args.add_argument("-f", "--framework",
+    args.add_argument("-m", "--model",
+                      default='edge',
+                      choices=['edge', 'ref'],
+                      help="Model to use")
+
+   args.add_argument("-f", "--framework",
                       default='torch',
                       choices=['torch', 'tf'],
                       help="Framework to use")
@@ -258,7 +268,7 @@ def main():
                       help="If specified, videos are moved "
                       "to this path after processing.")
 
-    args.add_argument("-m", "--max-workers",
+    args.add_argument("--max-workers",
                       default=1,
                       type=int,
                       help="Max. workers to send parallel requests.")
@@ -298,6 +308,7 @@ def main():
 
     process_dataset(dataset,
                     dataset_name=config.name,
+                    model=config.model,
                     framework=config.framework,
                     process_all=(not config.fast),
                     move_when_done=config.move,
