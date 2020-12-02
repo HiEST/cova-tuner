@@ -13,6 +13,7 @@ import time
 import cv2
 import numpy as np
 import pandas as pd
+import pickle
 import torch
 from torchvision.models import mobilenet_v2, resnet152
 from torchvision.models.detection import faster_rcnn
@@ -83,6 +84,7 @@ def get_top_tf(preds, topn=10):
 def infer_video(filename, model, device, framework):
     cap = cv2.VideoCapture(filename)
     ret, frame = cap.read()
+    frame_shape = frame.shape
     frame_id = 0
 
     data = []
@@ -96,15 +98,32 @@ def infer_video(filename, model, device, framework):
             data.append(get_top_tf(preds))
 
         frame_id += 1
-
         ret, frame = cap.read()
 
-    return data
+    return data, frame_shape
 
 
-def process_video(filename, model, device='cpu', framework='torch'):
+def process_video(filename, model, device='cpu', framework='torch', output=None):
     ts0 = time.time()
-    data = infer_video(filename, model, device, framework)
+    data, frame_shape = infer_video(filename, model, device, framework)
+    if output is not None:
+        path = f'{output}/{Path(filename).stem}.pkl'
+        columns = ['frame', 'class_id', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
+
+        df_data = []
+        for i,d in enumerate(data):
+            for j in range(len(d['boxes'])):
+                class_id = int(d['idxs'][j])
+                score = float(d['scores'][j])
+                bbox = d['boxes'][j]
+                ymin, xmin, ymax, xmax = tuple(bbox)
+                  
+                (xmin, xmax, ymin, ymax) = (int(xmin * frame_shape[1]), int(xmax * frame_shape[1]),
+                                              int(ymin * frame_shape[0]), int(ymax * frame_shape[0]))
+                df_data.append([i, class_id, score, xmin, ymin, xmax, ymax])
+                
+        df = pd.DataFrame(df_data, columns=columns)
+        df.to_pickle(path, compression='bz2')
 
     scores = [','.join(f'{s:.3f}'
                        for s in p['scores']) for p in data]
@@ -126,11 +145,12 @@ def process_video_parallel(args):
     filename = args[0]
     model = args[1]
     framework = args[2]
+    output = args[3]
 
     m = models[model]
     device = devices[model]
 
-    return process_video(filename, m, device, framework)
+    return process_video(filename, m, device, framework, output)
 
 
 def chunks(lst, n):
@@ -151,6 +171,8 @@ def split_date(ts):
 def process_dataset(dataset, dataset_name,
                     model='edge',
                     framework='torch',
+                    output='./',
+                    per_video_results=False,
                     process_all=True,
                     move_when_done=None,
                     max_workers=1):
@@ -180,22 +202,25 @@ def process_dataset(dataset, dataset_name,
                 videos.append(str(f))
                 processed_ts[date_hour] = f.stem
 
+    video_results_output = output if per_video_results else None
     query_args = [
-        [video, model, framework]
+        [video, model, framework, video_results_output]
         for video in videos
     ]
     # query_args = [
     #     [video, model, framework]
     #     for video, model in product(videos, models.keys())
     # ]
+    if len(query_args) < max_workers*2:
+        max_workers = len(query_args)
+
 
     for chunk_idx, chunk in enumerate(chunks(query_args, max_workers*2)):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             results = executor.map(process_video_parallel, chunk)
-
+    
             for r_idx, r in enumerate(results):
                 filename = chunk[r_idx][0]
-                # model = chunk[r_idx][1]
                 if len(r) == 0:
                     print(f'0 results for {filename} with model {model}')
                     continue
@@ -214,7 +239,7 @@ def process_dataset(dataset, dataset_name,
                 detections = detections.append(df, ignore_index=True)
                 print(f'{len(detections)} detections.')
                 print(f'Writing results to {dataset_name}.tmp.csv.{chunk_idx}')
-                detections.to_csv(f'{dataset_name}.tmp.csv.{chunk_idx}',
+                detections.to_csv(f'{output}/{dataset_name}.tmp.csv.{chunk_idx}',
                                   sep=',',
                                   float_format='.2f',
                                   index=False)
@@ -222,11 +247,12 @@ def process_dataset(dataset, dataset_name,
                 print(f'Results from {filename} just processed.')
 
             videos_processed[filename] += 1
-            if videos_processed[filename] == len(models):
+            if move_when_done is not None and \
+                    videos_processed[filename] == len(models):
                 shutil.move(filename, move_when_done)
                 del videos_processed[filename]
 
-    detections.to_csv(f'{dataset_name}.csv',
+    detections.to_csv(f'{output}/{dataset_name}.csv',
                       sep=',',
                       float_format='.2f',
                       index=False)
@@ -240,6 +266,11 @@ def main():
                       default="./",
                       type=str,
                       help="Path to the dataset to process.")
+
+    args.add_argument("-o", "--output",
+                      default="./",
+                      type=str,
+                      help="Path where to write results.")
 
     args.add_argument("-n", "--name",
                       default="dataset",
@@ -260,6 +291,12 @@ def main():
                       default=False,
                       action="store_true",
                       help="Processes one video per hour "
+                      "instead of the whole dataset.")
+
+    args.add_argument("--per-video-results",
+                      default=False,
+                      action="store_true",
+                      help="Write results per video."
                       "instead of the whole dataset.")
 
     args.add_argument("--move",
@@ -297,19 +334,25 @@ def main():
         models['edge'].eval()
         models['ref'].eval()
     elif config.framework == 'tf':
+        # Edge Model: MobileNetV2 320x320
         ref_model = 'Faster R-CNN Inception ResNet V2 1024x1024'
-        models['edge'] = init_detector()
-        models['ref'] = init_detector(ref_model)
-        models['edge'].input_size = (320, 320)
-        models['ref'].input_size = (1024, 1024)
-        # models['ref'] = models['edge']
-        devices['edge'] = 'cpu'
-        devices['ref'] = devices['edge']
+
+        # Load model
+        if config.model == 'edge':
+            models['edge'] = init_detector()
+            models['edge'].input_size = (320, 320)
+            devices['edge'] = 'cpu'
+        else:
+            models['ref'] = init_detector(ref_model)
+            models['ref'].input_size = (1024, 1024)
+            devices['ref'] = devices['edge']
 
     process_dataset(dataset,
                     dataset_name=config.name,
                     model=config.model,
                     framework=config.framework,
+                    output=config.output,
+                    per_video_results=config.per_video_results,
                     process_all=(not config.fast),
                     move_when_done=config.move,
                     max_workers=config.max_workers)
