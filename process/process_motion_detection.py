@@ -190,6 +190,7 @@ def main():
                       help="Max. workers to send parallel requests.")
 
     # Motion Detection
+    args.add_argument("--first-pass-background", action="store_true", help="Give a first pass to the video to get a more accuracte background")
     args.add_argument("--no-merge-rois", action="store_true", help="Don't merge ROIs on scene")
     args.add_argument("-a", "--min-area", type=int, default=500, help="minimum area size")
     args.add_argument("--no-average", help="use always first frame as background.", action="store_true")
