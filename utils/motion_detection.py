@@ -5,7 +5,7 @@ import cv2
 
 from utils.nms import non_max_suppression_fast
 from utils.iou import compute_iou
-from utils import constants
+
 
 def GaussianBlur(frame):
 # To filter out small variations from frame to frame 
@@ -74,11 +74,13 @@ def merge_near_boxes(boxes, proximity=1.05):
     # return merged_boxes
 
 
-def propose_rois(boxes, roi_width=256, roi_height=256, max_width=1920, max_height=1080, random_factor=1):
+def propose_rois(boxes, roi_width=0, roi_height=0, max_width=1920, max_height=1080, random_factor=1):
     roi_proposals = []
     boxes = np.array(boxes)
 
     
+    roi_ar = roi_width / roi_height
+
     if len(boxes) > 1:
         boxes = non_max_suppression_fast(boxes)
 
@@ -87,21 +89,21 @@ def propose_rois(boxes, roi_width=256, roi_height=256, max_width=1920, max_heigh
     for box in boxes:
         width = box[2] - box[0]
         height = box[3] - box[1]
-        if width < constants.ROI_SIZE[0] and height < constants.ROI_SIZE[1]:
-            new_roi = constants.ROI_SIZE
+        if width < roi_width and height < roi_height:
+            new_roi = (roi_width, roi_height)
 
         elif width < height:
-            # Resize with same aspect ratio as constants.ROI_SIZE
+            # Resize with same aspect ratio the default roi
             aspect = width / height
             new_roi = [
-                width * (constants.ROI_AR/aspect),
+                width * (roi_ar/aspect),
                 height
             ]
         else:
             aspect = width / height
             new_roi = [
                 width,
-                height * (aspect/constants.ROI_AR),
+                height * (aspect/roi_ar),
             ]
 
         # Offset from the center of the box
@@ -153,7 +155,12 @@ class Background:
         self.last_frames = []
         self.skipped = 0
 
+        self.frozen = False
+
     def update(self, frame):
+        if self.frozen:
+            return self.background
+
         if self.background is None:
             self.background = GaussianBlur(frame)
             self.background_color = frame.copy()
@@ -193,6 +200,11 @@ class Background:
         return self.background
 
             
+    def freeze(self):
+        self.frozen = True
+
+    def unfreeze(self):
+        self.frozen = False
 
 class MotionDetection:
 # background: Background object
@@ -207,6 +219,7 @@ class MotionDetection:
         background=None, 
         delta_threshold=25, 
         min_area_contour=500,
+        roi_size=(1,1),
         merge_rois=True
     ):
 
@@ -220,6 +233,8 @@ class MotionDetection:
         self.current_gray = None
         self.current_delta = None
         self.current_threshold = None
+
+        self.roi_size = roi_size
 
     def detect(self, frame):
 
@@ -252,21 +267,26 @@ class MotionDetection:
         cnts = imutils.grab_contours(cnts)
         
         boxes = []
+        areas = []
         # loop over the contours
         for c in cnts:
             # if the contour is too small, ignore it
+            contourArea = cv2.contourArea(c)
             if cv2.contourArea(c) < self.min_area_contour:
                 continue
 
             (x, y, w, h) = cv2.boundingRect(c)
             boxes.append([x, y, x+w, y+h])
+            areas.append(contourArea)
 
 
         if self.merge_rois and len(boxes) >= 1:
             max_height, max_width, _ = frame.shape
             boxes = propose_rois(boxes,
+                                 roi_width=self.roi_size[0],
+                                 roi_height=self.roi_size[1],
                                  max_width=max_width,
                                  max_height=max_height)
 
-        return boxes
+        return boxes, areas
         
