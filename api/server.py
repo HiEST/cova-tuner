@@ -53,7 +53,7 @@ def infer_torch(model, img, device='cpu'):
     predictions = model(x)
     del x
     ts1 = time.time()
-    print(f'inference took {ts1-ts0:.2f} seconds.')
+    # print(f'inference took {ts1-ts0:.2f} seconds.')
 
     return predictions[0].detach().cpu().numpy()
 
@@ -66,9 +66,10 @@ def get_top_torch(preds, topn=10):
     for i, idx in enumerate(idxs):
         results.append([str(idx), f'{preds[idx]:.2f}'])
 
+    results = np.array(results)
     top = {
-        'idxs': results[0],
-        'scores': results[1]
+        'idxs': results[:,0],
+        'scores': results[:,1]
     }
     return top
 
@@ -220,6 +221,7 @@ class Video(Resource):
             else:
                 print(f'Accepted a new request for {args.video} and model {args.model}')
 
+        # args.video.save(tf)
         tf = videos[args.video]
 
         video_results[args.video][args.model] = ['running', []]
