@@ -23,7 +23,7 @@ import tensorflow_hub as hub
 from utils.motion_detection import MotionDetection, Background
 from utils.classification import Classifier
 from utils.detector import init_detector, run_detector, detect_and_draw, label_map
-from utils.capture_screen import CaptureScreen
+# from utils.capture_screen import CaptureScreen
 from utils.constants import *
 
 
@@ -85,7 +85,7 @@ def main():
 
     frame_width = 1920
     frame_height = 1080
-    play_fps = 1
+    play_fps = 30
     frame_frequency = 1.0 / play_fps
     min_score = config.min_score
     mergeROIs = not config.no_merge_rois
@@ -229,7 +229,8 @@ def main():
             if config.classify or config.detect:
                 detection_frame = frame.copy()
                 detections_str = []
-                for roi in boxes:
+                for roi_id, roi in enumerate(boxes):
+                    print(f'[{roi_id}]{roi}')
                     cropped_roi = np.array(frame[roi[1]:roi[3], roi[0]:roi[2]])
 
                     if config.classify:
@@ -310,22 +311,23 @@ def main():
             
 
             if config.detect:
-                joint_detections = imutils.resize(joint_detections, width=800)
-                for j, det in enumerate(detections_full_str):
-                    coords = (10, 20 + 15*j)
-                    if coords[1] >= joint_detections.shape[0]-20:
-                        break
-                    cv2.putText(joint_detections, detections_full_str[j], coords,
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
-                if len(boxes):
-                    for j, det in enumerate(detections_str):
-                        coords = (joint_detections.shape[1]-100, 20 + 15*j)
+                if config.wait_for_detection is None or num_frames >= config.wait_for_detection:
+                    joint_detections = imutils.resize(joint_detections, width=1500)
+                    for j, det in enumerate(detections_full_str):
+                        coords = (10, 20 + 15*j)
                         if coords[1] >= joint_detections.shape[0]-20:
                             break
-                        cv2.putText(joint_detections, detections_str[j], coords,
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                        cv2.putText(joint_detections, detections_full_str[j], coords,
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+                    if len(boxes):
+                        for j, det in enumerate(detections_str):
+                            coords = (joint_detections.shape[1]-100, 20 + 15*j)
+                            if coords[1] >= joint_detections.shape[0]-20:
+                                break
+                            cv2.putText(joint_detections, detections_str[j], coords,
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-                if config.wait_for_detection is None or num_frames >= config.wait_for_detection:
+                    # if config.wait_for_detection is None or num_frames >= config.wait_for_detection:
                     cv2.imshow("Detections", joint_detections)
 
             if config.debug:
