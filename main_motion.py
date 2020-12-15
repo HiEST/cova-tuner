@@ -13,21 +13,31 @@ import tensorflow as tf
 import torch
 import torchvision
 from torchvision import transforms
-from torchvision.models import mobilenet_v2
+from torchvision.models import mobilenet_v2, resnet18, resnet50, resnet101
 from torchvision.models.detection import FasterRCNN, fasterrcnn_resnet50_fpn
 from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 import pandas as pd
  
-from api.client import offload_single_frame
-from api.server import get_top_torch, infer_torch, get_top_tf
-from training.binary import Net2
+# from api.client import offload_single_frame
+# from api.server import get_top_torch, infer_torch, get_top_tf
+# from training.binary import Net2
 from utils.datasets import IMAGENET, MSCOCO
 from utils.detector import init_detector, run_detector
 from utils.motion_detection import Background, MotionDetection
 from utils.nms import non_max_suppression_fast
 
 url = 'http://localhost:5000/infer'
+
+def get_yolov5():
+    model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).fuse().autoshape()  # for PIL/cv2/np inputs and NMS
+    return model
+ 
+
+def object_detection_torch(model, imgs):
+    results = model(imgs, size=640)
+    # import pdb; pdb.set_trace()
+    return results
 
 
 def get_resnet50_backbone(num_classes):
@@ -191,7 +201,7 @@ def main():
     framework = 'tf'
     if not config.offload and not config.no_infer:
         if config.classify_only:
-            if config.model is not None:
+            if config.model is not None and '.pth' in config.model:
                 if os.path.isfile(config.model):
                     classifier = Net2()
                     classifier.load_state_dict(torch.load(config.model))
@@ -204,12 +214,22 @@ def main():
                     print(f'[ERROR] Model not found in {config.model}')
                     sys.exit(1)
             else:
-                classifier = mobilenet_v2(pretrained=True)
+                if config.model == 'resnet18':
+                    classifier = resnet18(pretrained=True)
+                elif config.model == 'resnet50':
+                    classifier = resnet50(pretrained=True)
+                elif config.model == 'resnet101':
+                    classifier = resnet101(pretrained=True)
+                else:
+                    classifier = mobilenet_v2(pretrained=True)
                 label_map = IMAGENET
         else:
             if config.model is not None:
                 if config.model in ['ref', 'edge']:
                     detector = init_detector(config.model)
+                elif config.model == 'yolov5':
+                    detector = get_yolov5() 
+                    framework = 'torch'
                 else:
                     detector = get_instance_segmentation_model(config.model)
                     detector.eval()
@@ -296,25 +316,35 @@ def main():
                     transform = transforms.Compose([
                         transforms.ToPILImage(),
                         transforms.Resize((224, 224)),
-                        transforms.ToTensor()
+                        transforms.ToTensor(),
+                        transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                             std=[0.229, 0.224, 0.225]) 
                     ])
                     img = transform(cropped_roi)
                     img = img.unsqueeze(0)
                     ts0 = time.time()
-                    with torch.no_grad():
+
+                    if config.model is not None and '.pth' in config.model:
+                        with torch.no_grad():
+                            preds = classifier(img)
+                            preds = torch.max(torch.log_softmax(preds, dim=1), dim=1).float()
+                            scores = [1]
+                            class_ids = [int(c) for c in preds.indices.flatten()]
+                    else:
                         preds = classifier(img)
-                        import pdb; pdb.set_trace()
-                        preds = torch.max(torch.log_softmax(preds, dim=1), dim=1).float()
+                        preds = torch.nn.functional.softmax(preds[0], dim=0)
+                        preds = preds.detach().numpy()
+                        top = get_top_torch(preds, topn=1)
+                        scores = [float(s) for s in top['scores']]
+                        class_ids = [int(c) for c in top['idxs']]
+                        
                     ts1 = time.time()
                     # print(f'inference took {ts1-ts0:.3} seconds')
-                    # preds = infer_torch(classifier, cropped_roi)
                     boxes = []
                     # preds = get_top_torch(preds)
                     # scores = [float(s)/100 for s in preds['scores']]
                     # class_ids = [int(c) for c in preds['idxs']]
                     # scores = [s for s in preds.values.flatten()]
-                    scores = [1]
-                    class_ids = [int(c) for c in preds.indices.flatten()]
                     # import pdb; pdb.set_trace()
                 elif framework == 'tf':
                     preds = run_detector(detector, cropped_roi, input_size=input_size) 
@@ -337,11 +367,23 @@ def main():
                     ])
                     img = transform(cropped_roi)
                     img = img.unsqueeze(0)
-                    preds = detector(img)
-                    boxes = preds[0]['boxes'].detach().numpy()
-                    scores = preds[0]['scores'].detach().numpy()
-                    class_ids = preds[0]['labels'].detach().numpy()
+                    # preds = detector(img)
+                    if config.model == 'yolov5':
+                        preds = object_detection_torch(detector, img)
+                        if len(preds.xyxy[0]) > 0:
+                            preds = preds.xyxy[0].detach().numpy()
+                            boxes = [[preds[0][0], preds[0][1], preds[0][2], preds[0][3]]]
+                            scores = [preds[0][4]]
+                            class_ids = [int(preds[0][5])]
+                        else:
+                            boxes = []
 
+                    else:
+                        preds = detector(img)[0]
+                        boxes = preds['boxes'].to('cpu').detach().numpy()
+                        scores = preds['scores'].to('cpu').detach().numpy()
+                        class_ids = preds['labels'].to('cpu').detach().numpy()
+            
                 infer_ts1 = time.time()
                 infer_ts += infer_ts1 - infer_ts0
                                    
@@ -353,10 +395,11 @@ def main():
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
 
                 if config.classify_only:
+                    # import pdb; pdb.set_trace()
                     if scores[0] >= min_score:
-                        # print(f'[{class_ids[0]}]{label_map[class_ids[0]]} ({scores[0]})')
-                        cv2.putText(frame, f'{label_map[class_ids[0]]} ({scores[0]})', (roi[0], roi[1]+10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        print(f'[{class_ids[0]}]{label_map[class_ids[0]]} ({scores[0]*100}%)')
+                        cv2.putText(frame, f'{label_map[class_ids[0]]} ({scores[0]*100}%)', (roi[0], roi[1]+10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
 
                 for i in range(min(len(boxes), max_boxes)):
                     # if boxes[i] not in boxes_nms:
