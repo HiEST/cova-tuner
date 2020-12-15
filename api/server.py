@@ -64,7 +64,7 @@ def get_top_torch(preds, topn=10):
     idxs = np.argpartition(-preds, 5)[:topn]
     results = []
     for i, idx in enumerate(idxs):
-        results.append([str(idx), f'{preds[idx]:.2f}'])
+        results.append([str(idx), f'{preds[idx]:.3f}'])
 
     results = np.array(results)
     top = {
