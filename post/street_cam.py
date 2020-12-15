@@ -3,6 +3,7 @@
 import argparse
 from collections import defaultdict
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -27,6 +28,35 @@ def join_results(path, name, output):
     data.to_csv(f'{output}/{name}.csv', sep=',', index=False)
 
 
+def create_intermediate_data(data, threshold=0.5):
+    columns = ['cam', 'timestamp', 'frame_id', 'model', 'score', 'class'] 
+    new_data = []
+    for cam in data.cam.unique():
+        data_cam = data[data.cam == cam]
+        for ts in data_cam.timestamp.unique():
+            data_ts = data_cam[data_cam.timestamp == ts]
+            for row_id, row in data_ts.iterrows(): 
+                top_scores = row['top_scores'].split(',')
+                top_classes = row['top_classes'].split(',')
+                for s, c in zip(top_scores, top_classes):
+                    s = float(s)
+                    if s < threshold:
+                        continue
+
+                    c = int(c)
+                    new_row = [
+                        cam,
+                        ts,
+                        row['frame_id'],
+                        row['model'],
+                        s,
+                        c
+                    ]
+                    new_data.append(new_row)
+
+    new_data = pd.DataFrame(new_data, columns=columns)
+    return new_data
+
 def process_results(data, threshold=0.5):
     with open('../aux/mscoco.json', 'r') as f:
         labels = json.load(f)
@@ -34,7 +64,7 @@ def process_results(data, threshold=0.5):
     results = {}
     for entry_id in data.id.unique():
         results[entry_id] = {}
-        for model in ['ref', 'edge']:
+        for model in ['ref', 'edge', 'edge-motion']:
             data_ = data[(data.model == model) & (data.id == entry_id)]
             results[entry_id][model] = {
                 'frame_results': [],
@@ -55,7 +85,7 @@ def process_results(data, threshold=0.5):
                     'avg_score': 0.0,
                     'class_histogram': defaultdict(int)
                 })
-                for s, c in zip(class_idxs, scores):
+                for c, s in zip(class_idxs, scores):
                     s = float(s)
                     if s < threshold:
                         continue
@@ -99,17 +129,25 @@ def main():
     config = args.parse_args()
 
     # if config.input is not None:
-    join_results(
-        path=config.input,
-        name=config.name,
-        output=config.output)
+    if os.path.isdir(config.input):
+        join_results(
+            path=config.input,
+            name=config.name,
+            output=config.output)
 
-    data = pd.read_csv(f'{config.output}/{config.name}.csv')
-    data['id'] = data.apply(lambda x: f"{x['cam']}/{x['timestamp']}", axis=1)
-    results = process_results(data, threshold=config.threshold)
+        data = pd.read_csv(f'{config.output}/{config.name}.csv')
+    else:
+        data = pd.read_csv(config.input)
 
-    with open(f'{config.output}/{config.name}.json', 'w') as f:
-        json.dump(results, f)
+    new_data = create_intermediate_data(data, config.threshold)
+    new_data.to_csv(f'{config.output}/{config.name}.threshold_{config.threshold}.csv',
+                    sep=',', float_format='%.3f', index=False)
+
+    # data['id'] = data.apply(lambda x: f"{x['cam']}/{x['timestamp']}", axis=1)
+    # results = process_results(data, threshold=config.threshold)
+
+    # with open(f'{config.output}/{config.name}.json', 'w') as f:
+    #     json.dump(results, f)
 
 if __name__ == '__main__':
     main()
