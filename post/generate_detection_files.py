@@ -12,7 +12,11 @@ from utils.datasets import MSCOCO as label_map
 
 
 def generate_detection_files(detections, output_dir, prefix, ground_truth=False, threshold=0.0):
-    detections['label'] = detections.class_id.apply(lambda x: label_map[str(x)]['name'].replace(' ', '_'))
+    if 'label' not in detections.columns:
+        detections['label'] = detections.class_id.apply(lambda x: label_map[str(x)]['name'].replace(' ', '_'))
+    else:
+        detections['label'] = detections.label.apply(lambda x: x.replace(' ', '_'))
+
 
     output_dir = f'{output_dir}/{"groundtruths" if ground_truth else "detections"}'
     if not os.path.exists(output_dir):
