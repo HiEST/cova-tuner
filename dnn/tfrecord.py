@@ -1,10 +1,24 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from __future__ import division
+from __future__ import print_function
+from __future__ import absolute_import
+
+import os
+import io
+
+import pandas as pd
+import tensorflow.compat.v1 as tf
+
+from PIL import Image
+from object_detection.utils import dataset_util
+from collections import namedtuple
+
 def label_to_id_map(label_map):
     id_map = {
-        c['name']: i
-        for i, c in enumerate(label_map.items())
+        c['name']: int(c['id'])
+        for c in label_map.values()
     }
     return id_map
 
@@ -37,7 +51,7 @@ def create_tf_example(group, path, id_map):
         ymins.append(row['ymin'] / height)
         ymaxs.append(row['ymax'] / height)
         classes_text.append(row['class'].encode('utf8'))
-        classes.append(id_map(row['class']))
+        classes.append(id_map[row['class']])
 
     tf_example = tf.train.Example(features=tf.train.Features(feature={
         'image/height': dataset_util.int64_feature(height),

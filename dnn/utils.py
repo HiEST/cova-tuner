@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import shutil
 import sys
 
 import cv2
@@ -11,10 +12,19 @@ import pandas as pd
 from tqdm import trange
 
 sys.path.append('../')
-from dnn.tf_infer import run_detector
+from dnn.tfinfer import run_detector
+from utils.datasets import MSCOCO as mscoco
 
 
-def detect_video(filename, detector, min_score=0.5, max_boxes=100, label_map=None, save_frames_to=None, resize=True, max_frames=0, skip_frames=0):
+def detect_video(filename,
+                 detector,
+                 min_score=0.5,
+                 max_boxes=100,
+                 label_map=None,
+                 save_frames_to=None,
+                 resize=None,
+                 max_frames=0,
+                 skip_frames=0):
 
     if save_frames_to is not None:
         os.makedirs(save_frames_to, exist_ok=True)
@@ -28,6 +38,10 @@ def detect_video(filename, detector, min_score=0.5, max_boxes=100, label_map=Non
         columns.append('label')
 
     ret, frame = cap.read()
+    if resize is not None:
+        if len(resize) == 1:  # Only height is set, calculate width keeping aspect ratio
+            width = (resize[0] / frame.shape[0]) * frame.shape[1]
+            resize.append(width)
 
     frames_skipped = 0
     for frame_id in trange(total_frames):
@@ -38,8 +52,8 @@ def detect_video(filename, detector, min_score=0.5, max_boxes=100, label_map=Non
             else:
                 frames_skipped = 0
 
-        if resize:
-            frame = imutils.resize(frame, detector.input_size)
+        if resize is not None:
+            frame = imutils.resize(frame, height=resize[0], width=resize[1])
 
         if save_frames_to is not None:
             img_filename = '{}/{}.jpg'.format(save_frames_to, frame_id)
@@ -150,22 +164,32 @@ def save_frames(video, save_to, frames_to_save, new_height=None):
 
 def annotate_video(filename,
                    groundtruth,
-                   label_map,
                    images_dir,
                    data_dir,
+                   valid_classes,
+                   label_map=None,
                    val_ratio=0.2,
                    reshape=None,
                    min_score=0.5,
                    max_boxes=10,
                    img_format='jpg'):
 
-    classes = [c['name'] for c in label_map.values()]
+    if label_map is None:
+        label_map = mscoco
 
     cap = cv2.VideoCapture(filename)
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    print(f'video has a total of {total_frames} frames')
     ret, frame = cap.read()
     width, height, _ = frame.shape
 
     if reshape is not None:
+        height = reshape[0]
+        if len(reshape) == 1:  # Only height is set, calculate width keeping aspect ratio
+            width = (reshape[0] / frame.shape[0]) * frame.shape[1]
+            reshape.append(int(width))
+        width = reshape[1]
+        print(reshape)
         reshape_width = reshape[0] / width
         reshape_height = reshape[1] / height
     else:
@@ -175,12 +199,12 @@ def annotate_video(filename,
     gt_detections = pd.read_pickle(groundtruth, "bz2")
     annotations = []
     frame_id = 0
-    while ret:
+    for frame_id in trange(total_frames):  #while ret:
         detections = gt_detections[gt_detections.frame == frame_id]
         if len(detections) > 0:
             # Resize image before writing it to disk
             if reshape is not None:
-                frame = imutils.resize(frame, width=reshape[0], height=reshape[1]) 
+                frame = imutils.resize(frame, height=reshape[0], width=reshape[1]) 
 
             filename = '{}.{}'.format(frame_id, img_format)
             boxes_saved = 0
@@ -188,17 +212,17 @@ def annotate_video(filename,
                 score = det['score']
                 if score > min_score and boxes_saved < max_boxes:
                     class_name = label_map[str(int(det['class_id']))]['name']
-                    if class_name not in classes:
+                    if class_name not in valid_classes:
                         continue
 
                     boxes_saved += 1
 
                     # Get bbox info + frame info and scale to new width
                     (xmin, xmax, ymin, ymax) = det[['xmin', 'xmax', 'ymin', 'ymax']].values 
-                    xmin = int(xmin * resize_width)
-                    xmax = int(xmax * resize_width)
-                    ymin = int(ymin * resize_height)
-                    ymax = int(ymax * resize_height)
+                    xmin = int(xmin * reshape_width)
+                    xmax = int(xmax * reshape_width)
+                    ymin = int(ymin * reshape_height)
+                    ymax = int(ymax * reshape_height)
                     
                     annotations.append([filename, width, height, class_name, xmin, ymin, xmax, ymax])
 
@@ -206,7 +230,9 @@ def annotate_video(filename,
                 cv2.imwrite('{}/{}'.format(images_dir, filename), frame)
 
         ret, frame = cap.read()
-        frame_id += 1
+        # frame_id += 1
+        if not ret:
+            break
 
     columns = ['filename', 'width', 'height', 'class', 'xmin', 'ymin', 'xmax', 'ymax']
     df = pd.DataFrame(annotations, columns=columns)
@@ -217,15 +243,27 @@ def annotate_video(filename,
     train_dataset = df[df.filename.isin(train_imgs)]
     test_dataset = df[df.filename.isin(test_imgs)]
 
+    # Create train/test subfolders
+    os.makedirs('{}/train'.format(images_dir), exist_ok=True)
+    os.makedirs('{}/test'.format(images_dir), exist_ok=True)
     for img in train_dataset.filename.unique():
-        shutil.move('{}/{}'.format(images_dir, img),
-                    '{}/train/'.format(images_dir))
+        try:
+            shutil.move('{}/{}'.format(images_dir, img),
+                        '{}/train/{}'.format(images_dir, img))
+        except:
+            print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
+            raise
     for img in test_dataset.filename.unique():
-        shutil.move('{}/{}'.format(images_dir, img),
-                    '{}/test/'.format(images_dir))
+        try:
+            shutil.move('{}/{}'.format(images_dir, img),
+                        '{}/test/{}'.format(images_dir, img))
+        except:
+            print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
+            raise
 
-    train_dataset['filename'] = train_dataset['filename'].apply(lambda x: '{}/train/{}'.format(images_dir, x))
-    test_dataset['filename'] = test_dataset['filename'].apply(lambda x: '{}/test/{}'.format(images_dir, x))
+    # Commented out because the right full relative path is set during .record creation
+    # train_dataset['filename'] = train_dataset['filename'].apply(lambda x: '{}/train/{}'.format(images_dir, x))
+    # test_dataset['filename'] = test_dataset['filename'].apply(lambda x: '{}/test/{}'.format(images_dir, x))
     train_dataset.to_csv('{}/train_label.csv'.format(data_dir), index=None)
     test_dataset.to_csv('{}/test_label.csv'.format(data_dir), index=None)
 
@@ -236,7 +274,7 @@ def generate_label_map(classes):
     label_map = {
         i: {
             'name': c,
-            'id': str(i)
+            'id': str(i+1)  # Non-background classes start at id 1
         }
         for i, c in enumerate(classes)
     }
@@ -258,7 +296,7 @@ def configure_pipeline(template, output, checkpoint, data_dir, classes, batch_si
     num_classes = len(classes)
     print(label_map)
 
-    with open('data/label_map.pbtxt', 'w') as f:
+    with open('{}/label_map.pbtxt'.format(data_dir), 'w') as f:
         f.write(label_map)
 
     pipeline_params = {
@@ -282,3 +320,31 @@ def configure_pipeline(template, output, checkpoint, data_dir, classes, batch_si
             output.write(l)
 
 
+def generate_detection_files(detections, output_dir, prefix, label_map=None, groundtruth=False, threshold=0.0):
+    if label_map is None:
+        label_map = mscoco
+    if 'label' not in detections.columns:
+        if label_map is None:
+            return False
+        detections['label'] = detections.class_id.apply(lambda x: label_map[str(x)]['name'].replace(' ', '_'))
+    else:
+        detections['label'] = detections.label.apply(lambda x: x.replace(' ', '_'))
+
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    frames = detections.frame.unique()
+    for frame in frames:
+        frame_detections = detections[(detections.frame == frame) & (detections.score > threshold)]
+        columns = ['label', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
+        if groundtruth:
+            columns = ['label', 'xmin', 'ymin', 'xmax', 'ymax']
+
+        frame_detections = frame_detections[columns]
+
+        output_file = f'{output_dir}/{prefix}_{frame}.txt'
+        with open(output_file, 'w') as f:
+            frame_detections.to_csv(f, sep=' ', index=False, header=False)
+
+
+    return True
