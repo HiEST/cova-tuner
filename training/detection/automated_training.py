@@ -11,18 +11,20 @@ import subprocess as sp
 import sys
 
 import pandas as pd
+from tqdm import tqdm, trange
 
 sys.path.append('../../')
 from dnn.utils import detect_video, annotate_video, \
                     generate_label_map, generate_detection_files, \
-                    configure_pipeline, read_pickle
+                    configure_pipeline, read_pickle, to_pickle
 from dnn.tfrecord import generate_tfrecord
-from dnn.tftrain import train_loop, export_trained_model
+from dnn.tftrain import train_loop, export_trained_model, load_saved_model
 
 
 def automated_training_loop(config):
     # Global vars
     paths = config['paths']
+    root_dir = paths['root_dir']
     datasets_dir = paths.get('dataset_dir', 'datasets')
     train_dir = paths.get('train_dir', 'training')
     saved_models_dir = paths.get('saved_models_dir', 'trained_models')
@@ -38,13 +40,20 @@ def automated_training_loop(config):
 
     annotation = config['annotation']
     classes = annotation.get('classes', 'car,person,traffic light,motorcycle,truck,bus').split(',')
-    groundtruth_threshold = annotation.getfloat('groundtruth_threshold', 0.5)
+    min_annotation_score = annotation.getfloat('min_annotation_score', 0.5)
+    frame_skipping = annotation.getint('frame_skipping', 5)
 
     train_config = config['train']
     template_config = train_config.get('template_config', 'pipeline_template.config')
     num_train_steps = train_config.getint('num_train_steps', 5000)
     batch_size = train_config.getint('batch_size', 32)
-    
+   
+    test_config = config['test']
+    min_test_score = test_config.getfloat('min_test_score', 0.0)
+    max_test_boxes = test_config.getint('max_test_boxes', 10)
+    min_test_score_gt = test_config.getfloat('min_test_score_gt', 0.5)
+
+
     # Make sure all directories exist and create those that don't contain required data
     if not os.path.exists(gt_dir):
         print('Directory with groundtruth files ({}) does not exist but is required.'.format(gt_dir))
@@ -86,13 +95,12 @@ def automated_training_loop(config):
         # i. one whole day never used for training
         # ii. all videos used in previous checkpoints. Will be moved from train_dataset
         # iii. same video used for current training iteration
-    train_dataset = [v for v in Path(train_dataset_path).glob('*.mkv')]
+    train_dataset = sorted([v for v in Path(train_dataset_path).glob('*.mkv')])
     test_dataset = [
-        [v for v in Path(test_dataset_path[0]).glob('*.mkv')],
+        sorted([v for v in Path(test_dataset_path[0]).glob('*.mkv')]),
         [],  # Videos previously used for training. Empty at first
     ]
     all_videos_dataset = train_dataset + test_dataset[0]
-
 
     # PRE B: Generate label_map with valid classes used to annotate/train 
     label_map = generate_label_map(classes)
@@ -113,7 +121,8 @@ def automated_training_loop(config):
             print('\t{}'.format(gt))
         sys.exit(1)
 
-    for test_video in all_videos_dataset:
+    for i in trange(len(all_videos_dataset), desc="Generating all groundtruth files in advance", file=sys.__stdout__):
+        test_video = all_videos_dataset[i]
         test_video_id = test_video.stem
         pickle_path = '{}/{}.pkl'.format(gt_dir, test_video_id)
         output_dir = '{}/{}/groundtruths'.format(detection_files_path, test_video_id)
@@ -128,13 +137,29 @@ def automated_training_loop(config):
             prefix=test_video_id,
             label_map=None,  # with label_map=None, mscoco is used
             groundtruth=True,
-            threshold=groundtruth_threshold
+            threshold=min_test_score_gt
         )
 
+    # Description for each step of the pipeline
+    pipeline_desc = [
+        '[Step 1] Annotating training video',
+        '[Step 2] Generating .record files',
+        '[Step 3] Configuring pipeline.config',
+        '[Step 4] Training from latest checkpoint',
+        '[Step 5] Exporting trained model',
+        '[Step 6] Evaluating newly trained model',
+        '[Step 7] Updating datasets'
+    ]
 
     # For each video:
-    for i, train_video in enumerate(train_dataset):
-        print('Processing training video {}/{}'.format(i, len(train_dataset)))
+    for train_video in tqdm(train_dataset,
+                            total=len(train_dataset),
+                            desc='Processing training video',
+                            file=sys.__stdout__):
+        # print('Processing training video {}/{}'.format(i, len(train_dataset)))
+        # Progress bar to show step of the training pipeline
+        pbar = tqdm(pipeline_desc, total=len(pipeline_desc), file=sys.__stdout__) 
+        pbar.set_description(pipeline_desc[0])
         
         # Experiment vars
         train_video_id = train_video.stem
@@ -148,21 +173,24 @@ def automated_training_loop(config):
         os.makedirs(images_dir, exist_ok=True)
 
         # 1. Annotate video.
-        annotate_video(
-            filename=str(train_video),
-            groundtruth='{}/{}.pkl'.format(gt_dir, train_video_id),
-            images_dir=images_dir,
-            data_dir=data_dir,
-            valid_classes=classes,
-            label_map=None,  # groundtruths are annotated with mscoco label_map
-            val_ratio=0.2,
-            reshape=[320],
-            min_score=0.,
-            max_boxes=10,
-            img_format='jpg'
-        )
+        # If the video was previously annotated during another experiment, don't repeat
+        if not os.path.exists('{}/train.record'.format(data_dir)):
+            annotate_video(
+                filename=str(train_video),
+                groundtruth='{}/{}.pkl'.format(gt_dir, train_video_id),
+                images_dir=images_dir,
+                data_dir=data_dir,
+                valid_classes=classes,
+                label_map=None,  # groundtruths are annotated with mscoco label_map
+                val_ratio=0.2,
+                reshape=[320],
+                min_score=min_annotation_score,
+                max_boxes=10,
+                img_format='jpg'
+            )
         
-
+        pbar.set_description(pipeline_desc[1])
+        pbar.update(1)
         # 2. Generate train.record and test.record using csv with annotations
         for dataset in ['train', 'test']:
             generate_tfrecord(
@@ -172,6 +200,8 @@ def automated_training_loop(config):
                 label_map
             ) 
 
+        pbar.set_description(pipeline_desc[2])
+        pbar.update(1)
         # 3. Configure Pipeline
         # i. Find latest checkpoint in the training folder
         latest_checkpoint = str(sorted(Path(train_dir).glob('**/ckpt-*.index'),
@@ -193,6 +223,8 @@ def automated_training_loop(config):
             batch_size=batch_size
         )
 
+        pbar.set_description(pipeline_desc[3])
+        pbar.update(1)
         # 4. Launch training with latest checkpoint
         train_loop(
             pipeline_config=pipeline_config_file,
@@ -200,6 +232,8 @@ def automated_training_loop(config):
             num_train_steps=num_train_steps
         )
 
+        pbar.set_description(pipeline_desc[4])
+        pbar.update(1)
         # 5. Export trained model
         export_trained_model(
             pipeline_config_path=pipeline_config_file,
@@ -207,7 +241,11 @@ def automated_training_loop(config):
             output_dir=exported_model_dir
         )
 
+        pbar.set_description(pipeline_desc[5])
+        pbar.update(1)
         # 6. Test new model against all eval dataset.
+        # First, load the recently exported model
+        detector = load_saved_model('{}/saved_model/'.format(exported_model_dir))
         test_accuracy = None  # DataFrame to store accuracies of all three test datasets
         for test_ds_id, test_ds in enumerate([test_dataset[0], test_dataset[1], [train_video]]):
             if len(test_ds) == 0:
@@ -224,8 +262,8 @@ def automated_training_loop(config):
                 test_results = detect_video(
                     filename=str(test_video),
                     detector=detector,
-                    min_score=min_score,
-                    max_boxes=max_boxes,
+                    min_score=min_test_score,
+                    max_boxes=max_test_boxes,
                     label_map=label_map,
                     save_frames_to=None,
                     resize=None
@@ -243,7 +281,7 @@ def automated_training_loop(config):
                 to_pickle(test_results, '{}/{}.pkl'.format(output_dir, test_video_id))
 
                 generate_detection_files(
-                    detections=detections,
+                    detections=test_results,
                     output_dir=output_dir,
                     prefix=test_video_id,
                     label_map=label_map,
@@ -252,13 +290,21 @@ def automated_training_loop(config):
                 )
 
                 gt_detections_path = '{}/{}/groundtruths'.format(detection_files_path, test_video_id)
+                if os.path.exists('{}/results'.format(output_dir)):  # pascalvoc.py will stall if the folder is not empty
+                    print('{}/results already exists. Must be emptied before calling pascalvoc or it\'ll stall.'.format(output_dir))
+                    shutil.rmtree('{}/results'.format(output_dir))
+                os.makedirs('{}/results'.format(output_dir), exist_ok=False)
 
-                cmdline_str = f'python {pascalvoc} --det {output_dir} -detformay xyrb' +\
-                              f'-gt {gt_detections_path} -gtformat xyrb -np' +\
-                              f'--classes {",".join(classes)} -sp {output_dir}/results'
+                cmdline_str = f'python {root_dir}/{pascalvoc} --det {root_dir}/{output_dir} -detformat xyrb ' +\
+                              f'-gt {root_dir}/{gt_detections_path} -gtformat xyrb -np ' +\
+                              f'--classes "{",".join(classes)}" -sp {root_dir}/{output_dir}/results'
+                # print(f'Launching pascalvoc.py ({cmdline_str})')
                 cmdline = shlex.split(cmdline_str)
                 proc = sp.Popen(cmdline, stdout=sp.PIPE, stderr=sp.PIPE)
                 out, err = proc.communicate()
+                # print('pascalvoc output:')
+                # print(out.decode('utf-8'))
+                # print(err.decode('utf-8'))
 
                 # iii. Get AP & mAP metrics from results.txt
                 with open('{}/results/results.txt'.format(output_dir), 'r') as f:
@@ -266,21 +312,29 @@ def automated_training_loop(config):
 
                 ap_class = None
                 dataset_accuracy['test_video'].append(test_video_id)
+                # Initialize accuracy of all classes because some result files don't contain all of them
+                dataset_accuracy['mAP'].append(-1)
+                for c in classes:
+                    dataset_accuracy[c].append(-1)
+
                 for l in lines:
                     if ap_class is not None:
                         ap = float(l.split(' ')[1].replace('%', ''))
-                        dataset_accuracy[ap_class].append(ap)
+                        dataset_accuracy[ap_class][-1] = float(ap)
                         ap_class = None
 
                     if 'Class: ' in l:
-                        ap_class = l.split(' ')[1]
+                        ap_class = l.split(' ')[1].replace('\n', '')
                     elif 'mAP' in l:
                         mAP = l.split(' ')[1].replace('%', '')
-                        dataset_accuracy['mAP'].append(mAP)
+                        dataset_accuracy['mAP'][-1] = float(mAP)
                 
             # iv. Save csv with dataset accuracies and add averages to the global
+            # print(dataset_accuracy)
+            for k, v in dataset_accuracy.items():
+                print('{} -> {} ({})'.format(k, len(v), v))
             dataset_accuracy = pd.DataFrame.from_dict(dataset_accuracy)
-            dataset_accuracy.to_csv('{}/dataset_{}_accuracy.csv'.format(exported_model_dir, test_ds_id), ignore_index=True)
+            dataset_accuracy.to_csv('{}/dataset_{}_accuracy.csv'.format(exported_model_dir, test_ds_id), index=False)
 
             ds_mean = dataset_accuracy.mean() 
             ds_mean['test_dataset'] = test_ds_id
@@ -288,13 +342,16 @@ def automated_training_loop(config):
                 test_accuracy = pd.DataFrame([], columns=ds_mean.keys())
             test_accuracy = test_accuracy.append(ds_mean, ignore_index=True)
 
-        test_accuracy.to_csv('{}/test_accuracy.csv'.format(exported_model_dir), ignore_index=True)
+        test_accuracy.to_csv('{}/test_accuracy.csv'.format(exported_model_dir), index=True)
 
+        pbar.set_description(pipeline_desc[6])
+        pbar.update(1)
         # 7. Move the training video to test_dataset[1]
         # i. Move video file
         shutil.move(train_video, test_dataset_path[1])
         # ii. Add video to the test_dataset list
         test_dataset[1].append(train_video)
+
 
 def main():
     args = argparse.ArgumentParser()

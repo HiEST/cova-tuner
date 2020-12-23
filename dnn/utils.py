@@ -44,7 +44,7 @@ def detect_video(filename,
             resize.append(width)
 
     frames_skipped = 0
-    for frame_id in trange(total_frames):
+    for frame_id in trange(total_frames, desc='Detecting video contents', file=sys.__stdout__):
         if skip_frames > 0:
             if skip_frames > frames_skipped:
                 frames_skipped += 1
@@ -123,7 +123,7 @@ def pickle_to_csv(pickle, frame_shape, classes, reshape=None, label_map=None):
         for i, det in detections.iterrows():
             score = det['score']
             if score > min_score and boxes_saved < max_boxes:
-                class_name = label_map[str(int(det['class_id']))]['name']
+                class_name = label_map[int(det['class_id'])]['name']
                 if config.classes is not None and class_name not in config.classes:
                     continue
 
@@ -179,7 +179,6 @@ def annotate_video(filename,
 
     cap = cv2.VideoCapture(filename)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    print(f'video has a total of {total_frames} frames')
     ret, frame = cap.read()
     width, height, _ = frame.shape
 
@@ -189,7 +188,6 @@ def annotate_video(filename,
             width = (reshape[0] / frame.shape[0]) * frame.shape[1]
             reshape.append(int(width))
         width = reshape[1]
-        print(reshape)
         reshape_width = reshape[0] / width
         reshape_height = reshape[1] / height
     else:
@@ -199,7 +197,7 @@ def annotate_video(filename,
     gt_detections = pd.read_pickle(groundtruth, "bz2")
     annotations = []
     frame_id = 0
-    for frame_id in trange(total_frames):  #while ret:
+    for frame_id in trange(total_frames, desc='Processing frames', file=sys.__stdout__):  #while ret:
         detections = gt_detections[gt_detections.frame == frame_id]
         if len(detections) > 0:
             # Resize image before writing it to disk
@@ -211,7 +209,7 @@ def annotate_video(filename,
             for i, det in detections.iterrows():
                 score = det['score']
                 if score > min_score and boxes_saved < max_boxes:
-                    class_name = label_map[str(int(det['class_id']))]['name']
+                    class_name = label_map[int(det['class_id'])]['name']
                     if class_name not in valid_classes:
                         continue
 
@@ -272,7 +270,7 @@ def annotate_video(filename,
 
 def generate_label_map(classes):
     label_map = {
-        i: {
+        i+1: {
             'name': c,
             'id': str(i+1)  # Non-background classes start at id 1
         }
@@ -294,7 +292,6 @@ def configure_pipeline(template, output, checkpoint, data_dir, classes, batch_si
 
     label_map = '\n'.join(label_map_entries)
     num_classes = len(classes)
-    print(label_map)
 
     with open('{}/label_map.pbtxt'.format(data_dir), 'w') as f:
         f.write(label_map)
@@ -326,7 +323,7 @@ def generate_detection_files(detections, output_dir, prefix, label_map=None, gro
     if 'label' not in detections.columns:
         if label_map is None:
             return False
-        detections['label'] = detections.class_id.apply(lambda x: label_map[str(x)]['name'].replace(' ', '_'))
+        detections['label'] = detections.class_id.apply(lambda x: label_map[x]['name'].replace(' ', '_'))
     else:
         detections['label'] = detections.label.apply(lambda x: x.replace(' ', '_'))
 

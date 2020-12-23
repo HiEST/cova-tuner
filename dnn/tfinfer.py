@@ -67,8 +67,8 @@ def run_detector(detector, roi, input_size=(320, 320), max_boxes=100, iou_thresh
     img = imutils.resize(roi, width=input_size[0], height=input_size[1])
     converted_img  = tf.image.convert_image_dtype(img, tf.uint8)[tf.newaxis, ...]
     
-    result = detector(converted_img)
-    result = {key:value.numpy() for key,value in result.items()}
+    results = detector(converted_img)
+    results = {key:value.numpy() for key,value in results.items()}
 
     boxes = results['detection_boxes'][0]
     scores = results['detection_scores'][0]

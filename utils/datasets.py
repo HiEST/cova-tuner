@@ -9,6 +9,11 @@ IMAGENET = None
 with open(f'{cwd}/../aux/imagenet.txt', 'r') as c:
     IMAGENET = json.load(c)
 
-MSCOCO = None
+MSCOCO = {}
 with open(f'{cwd}/../aux/mscoco.json') as labels:
-    MSCOCO = json.load(labels)
+    mscoco = json.load(labels)
+    
+    for k in mscoco.keys():
+        MSCOCO[int(k)] = mscoco[k]
+
+    del mscoco

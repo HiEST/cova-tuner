@@ -8,6 +8,9 @@ from object_detection import exporter_lib_v2
 from object_detection.protos import pipeline_pb2
 
 
+def load_saved_model(path_to_model):
+    return tf.saved_model.load(path_to_model)
+
 def train_loop(pipeline_config,
                model_dir,
                num_train_steps,
