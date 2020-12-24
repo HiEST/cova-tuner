@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import configparser
+from copy import deepcopy
 import os
 from pathlib import Path
 import shlex  # split str commandfor sp
@@ -21,6 +23,95 @@ from dnn.tfrecord import generate_tfrecord
 from dnn.tftrain import train_loop, export_trained_model, load_saved_model
 
 
+def eval_detector(args):
+    test_video = str(args['test_video'])
+    test_video_id = args['test_video'].stem
+    pascalvoc = args['pascalvoc']
+    root_dir = args['root_dir']
+    detection_files_path = args['detection_files_path']
+    output_dir = args['output_dir']
+
+    detector = args['detector']
+    min_score = args['min_score']
+    max_boxes = args['max_boxes']
+    label_map = args['label_map'] 
+    classes = args['classes']
+
+    if not os.path.exists('{}/results/results.txt'.format(output_dir)):
+        test_results = detect_video(
+            filename=str(test_video),
+            detector=detector,
+            min_score=min_score,
+            max_boxes=max_boxes,
+            label_map=label_map,
+            save_frames_to=None,
+            resize=None
+        )
+
+        # ii. Compute mAP for the tested video using pascalvoc.py
+        # TODO: Integrate accuracy-metrics as a library
+
+        # ii.1 Generate detection files from detections of the newly processed video
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Save test_results detections to pickle for debugging/post-processing purposes
+        to_pickle(test_results, '{}/{}.pkl'.format(output_dir, test_video_id))
+
+        generate_detection_files(
+            detections=test_results,
+            output_dir=output_dir,
+            prefix=test_video_id,
+            label_map=label_map,
+            groundtruth=False,
+            threshold=.0  # FIXME: Should we set a threshold or use every single detection
+        )
+
+        gt_detections_path = '{}/{}/groundtruths'.format(detection_files_path, test_video_id)
+        if os.path.exists('{}/results'.format(output_dir)):  # pascalvoc.py will stall if the folder is not empty
+            print('{}/results already exists. Must be emptied before calling pascalvoc or it\'ll stall.'.format(output_dir))
+            shutil.rmtree('{}/results'.format(output_dir))
+        os.makedirs('{}/results'.format(output_dir), exist_ok=False)
+
+        cmdline_str = f'python {root_dir}/{pascalvoc} --det {root_dir}/{output_dir} -detformat xyrb ' +\
+                      f'-gt {root_dir}/{gt_detections_path} -gtformat xyrb -np ' +\
+                      f'--classes "{",".join(classes)}" -sp {root_dir}/{output_dir}/results'
+        # print(f'Launching pascalvoc.py ({cmdline_str})')
+        cmdline = shlex.split(cmdline_str)
+        proc = sp.Popen(cmdline, stdout=sp.PIPE, stderr=sp.PIPE)
+        out, err = proc.communicate()
+        # print('pascalvoc output:')
+        # print(out.decode('utf-8'))
+        # print(err.decode('utf-8'))
+
+    # Initialize accuracy of all classes because some result files don't contain all of them
+    accuracy = {
+        c: [0]
+        for c in classes
+    }
+    accuracy['test_video'] = [test_video_id]
+    accuracy['mAP'] = [0]
+
+    # iii. Get AP & mAP metrics from results.txt
+    with open('{}/results/results.txt'.format(output_dir), 'r') as f:
+        lines = f.readlines()
+
+    label = None
+    for l in lines:
+        if label is not None:
+            ap = float(l.split(' ')[1].replace('%', ''))
+            accuracy[label][0] = float(ap)
+            label = None
+
+        if 'Class: ' in l:
+            label = l.split(' ')[1].replace('\n', '')
+        elif 'mAP' in l:
+            mAP = l.split(' ')[1].replace('%', '')
+            accuracy['mAP'][0] = float(mAP)
+
+    # pbar.update(1)
+    return accuracy
+
+ 
 def automated_training_loop(config):
     # Global vars
     paths = config['paths']
@@ -52,6 +143,7 @@ def automated_training_loop(config):
     min_test_score = test_config.getfloat('min_test_score', 0.0)
     max_test_boxes = test_config.getint('max_test_boxes', 10)
     min_test_score_gt = test_config.getfloat('min_test_score_gt', 0.5)
+    max_test_workers = test_config.getint('max_workers', 1)
 
 
     # Make sure all directories exist and create those that don't contain required data
@@ -98,7 +190,7 @@ def automated_training_loop(config):
     train_dataset = sorted([v for v in Path(train_dataset_path).glob('*.mkv')])
     test_dataset = [
         sorted([v for v in Path(test_dataset_path[0]).glob('*.mkv')]),
-        [],  # Videos previously used for training. Empty at first
+        sorted([v for v in Path(test_dataset_path[1]).glob('*.mkv')])
     ]
     all_videos_dataset = train_dataset + test_dataset[0]
 
@@ -225,21 +317,27 @@ def automated_training_loop(config):
 
         pbar.set_description(pipeline_desc[3])
         pbar.update(1)
-        # 4. Launch training with latest checkpoint
-        train_loop(
-            pipeline_config=pipeline_config_file,
-            model_dir=train_model_dir,
-            num_train_steps=num_train_steps
-        )
 
-        pbar.set_description(pipeline_desc[4])
-        pbar.update(1)
-        # 5. Export trained model
-        export_trained_model(
-            pipeline_config_path=pipeline_config_file,
-            trained_checkpoint_dir=train_model_dir,
-            output_dir=exported_model_dir
-        )
+        if train_video_id in latest_checkpoint:  
+        # Means the latest checkpoint corresponds to the current training video
+            pbar.update(1)  # Compensate for step 5.
+        else:
+
+            # 4. Launch training with latest checkpoint
+            train_loop(
+                pipeline_config=pipeline_config_file,
+                model_dir=train_model_dir,
+                num_train_steps=num_train_steps
+            )
+
+            pbar.set_description(pipeline_desc[4])
+            pbar.update(1)
+            # 5. Export trained model
+            export_trained_model(
+                pipeline_config_path=pipeline_config_file,
+                trained_checkpoint_dir=train_model_dir,
+                output_dir=exported_model_dir
+            )
 
         pbar.set_description(pipeline_desc[5])
         pbar.update(1)
@@ -253,87 +351,52 @@ def automated_training_loop(config):
         
             # i. Run detections using new model on all videos of the test_ds
             # FIXME: Should the test input data be resized?
-            dataset_accuracy = {
-                c: [] for c in classes
-            }
-            dataset_accuracy['test_video'] = []
-            dataset_accuracy['mAP'] = []
-            for test_video in test_ds:
-                test_results = detect_video(
-                    filename=str(test_video),
-                    detector=detector,
-                    min_score=min_test_score,
-                    max_boxes=max_test_boxes,
-                    label_map=label_map,
-                    save_frames_to=None,
-                    resize=None
-                )
+            print(test_ds[0])
+            print(type(test_ds[0]))
+            try:
+                test_args = [
+                    {
+                        'test_video': test_video,
+                        'pascalvoc': pascalvoc,
+                        'root_dir': root_dir,
+                        'detection_files_path': detection_files_path,
+                        'output_dir': '{}/{}/detections_{}'.format(
+                                                    detection_files_path,
+                                                    train_video_id,
+                                                    test_video.stem
+                                                ),
+                        # 'detector': deepcopy(detector),
+                        'classes': classes,
+                        'detector': detector,
+                        'min_score': min_test_score,
+                        'max_boxes': max_test_boxes,
+                        # 'label_map': deepcopy(label_map),
+                        'label_map': label_map,
+                        # 'save_frame_to': None,
+                        # 'resize': None
+                    }
+                    for test_video in test_ds
+                ]
+            except:
+                import pdb; pdb.set_trace()
 
-                # ii. Compute mAP for the tested video using pascalvoc.py
-                # TODO: Integrate accuracy-metrics as a library
+            dataset_accuracy = None
+            with ThreadPoolExecutor(max_workers=max_test_workers) as executor:
+                results = list(tqdm(
+                    executor.map(eval_detector, test_args),
+                    total=len(test_args),
+                    desc='Evaluating videos',
+                    file=sys.__stdout__))
+                for result in results:
 
-                # ii.1 Generate detection files from detections of the newly processed video
-                test_video_id = test_video.stem
-                output_dir = '{}/{}/detections_{}'.format(detection_files_path, train_video_id, test_video_id)
-                os.makedirs(output_dir, exist_ok=True)
+                    video_accuracy = result
+                    df = pd.DataFrame.from_dict(video_accuracy)
+                    if dataset_accuracy is None:
+                        dataset_accuracy = df 
+                    else:
+                        dataset_accuracy = dataset_accuracy.append(df, ignore_index=True)
 
-                # Save test_results detections to pickle for debugging/post-processing purposes
-                to_pickle(test_results, '{}/{}.pkl'.format(output_dir, test_video_id))
-
-                generate_detection_files(
-                    detections=test_results,
-                    output_dir=output_dir,
-                    prefix=test_video_id,
-                    label_map=label_map,
-                    groundtruth=False,
-                    threshold=.0  # FIXME: Should we set a threshold or use every single detection
-                )
-
-                gt_detections_path = '{}/{}/groundtruths'.format(detection_files_path, test_video_id)
-                if os.path.exists('{}/results'.format(output_dir)):  # pascalvoc.py will stall if the folder is not empty
-                    print('{}/results already exists. Must be emptied before calling pascalvoc or it\'ll stall.'.format(output_dir))
-                    shutil.rmtree('{}/results'.format(output_dir))
-                os.makedirs('{}/results'.format(output_dir), exist_ok=False)
-
-                cmdline_str = f'python {root_dir}/{pascalvoc} --det {root_dir}/{output_dir} -detformat xyrb ' +\
-                              f'-gt {root_dir}/{gt_detections_path} -gtformat xyrb -np ' +\
-                              f'--classes "{",".join(classes)}" -sp {root_dir}/{output_dir}/results'
-                # print(f'Launching pascalvoc.py ({cmdline_str})')
-                cmdline = shlex.split(cmdline_str)
-                proc = sp.Popen(cmdline, stdout=sp.PIPE, stderr=sp.PIPE)
-                out, err = proc.communicate()
-                # print('pascalvoc output:')
-                # print(out.decode('utf-8'))
-                # print(err.decode('utf-8'))
-
-                # iii. Get AP & mAP metrics from results.txt
-                with open('{}/results/results.txt'.format(output_dir), 'r') as f:
-                    lines = f.readlines()
-
-                ap_class = None
-                dataset_accuracy['test_video'].append(test_video_id)
-                # Initialize accuracy of all classes because some result files don't contain all of them
-                dataset_accuracy['mAP'].append(-1)
-                for c in classes:
-                    dataset_accuracy[c].append(-1)
-
-                for l in lines:
-                    if ap_class is not None:
-                        ap = float(l.split(' ')[1].replace('%', ''))
-                        dataset_accuracy[ap_class][-1] = float(ap)
-                        ap_class = None
-
-                    if 'Class: ' in l:
-                        ap_class = l.split(' ')[1].replace('\n', '')
-                    elif 'mAP' in l:
-                        mAP = l.split(' ')[1].replace('%', '')
-                        dataset_accuracy['mAP'][-1] = float(mAP)
-                
             # iv. Save csv with dataset accuracies and add averages to the global
-            # print(dataset_accuracy)
-            for k, v in dataset_accuracy.items():
-                print('{} -> {} ({})'.format(k, len(v), v))
-            dataset_accuracy = pd.DataFrame.from_dict(dataset_accuracy)
             dataset_accuracy.to_csv('{}/dataset_{}_accuracy.csv'.format(exported_model_dir, test_ds_id), index=False)
 
             ds_mean = dataset_accuracy.mean() 
@@ -342,13 +405,13 @@ def automated_training_loop(config):
                 test_accuracy = pd.DataFrame([], columns=ds_mean.keys())
             test_accuracy = test_accuracy.append(ds_mean, ignore_index=True)
 
-        test_accuracy.to_csv('{}/test_accuracy.csv'.format(exported_model_dir), index=True)
+        test_accuracy.to_csv('{}/test_accuracy.csv'.format(exported_model_dir), index=False)
 
         pbar.set_description(pipeline_desc[6])
         pbar.update(1)
         # 7. Move the training video to test_dataset[1]
         # i. Move video file
-        shutil.move(train_video, test_dataset_path[1])
+        shutil.move(str(train_video), str(test_dataset_path[1]))
         # ii. Add video to the test_dataset list
         test_dataset[1].append(train_video)
 
