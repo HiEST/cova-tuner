@@ -15,6 +15,7 @@ from PIL import Image
 from object_detection.utils import dataset_util
 from collections import namedtuple
 
+
 def label_to_id_map(label_map):
     id_map = {
         c['name']: int(c['id'])
@@ -84,3 +85,18 @@ def generate_tfrecord(output_path, images_dir, csv_input, label_map):
     output_path = os.path.join(os.getcwd(), output_path)
     print('Successfully created the TFRecords: {}'.format(output_path))
 
+
+def generate_joint_tfrecord(output_path, images_dirs, csv_inputs, label_map=None):
+    writer = tf.python_io.TFRecordWriter(output_path)
+    id_map = label_to_id_map(label_map)
+    for img_dir, csv in zip(images_dirs, csv_inputs):
+        examples = pd.read_csv(csv)
+        grouped = split(examples, 'filename')
+        path = os.path.join(img_dir)
+        for group in grouped:
+            tf_example = create_tf_example(group, path, id_map)
+            writer.write(tf_example.SerializeToString())
+
+    writer.close()
+    output_path = os.path.join(os.getcwd(), output_path)
+    print('Successfully created the TFRecords: {}'.format(output_path))

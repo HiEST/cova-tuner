@@ -133,6 +133,8 @@ def automated_training_loop(config):
     classes = annotation.get('classes', 'car,person,traffic light,motorcycle,truck,bus').split(',')
     min_annotation_score = annotation.getfloat('min_annotation_score', 0.5)
     frame_skipping = annotation.getint('frame_skipping', 5)
+    allow_partial_map = annotation.getboolean('allow_partial_map', True)
+    accumulative_dataset = annotation.getboolean('accumulative_dataset', True)
 
     train_config = config['train']
     template_config = train_config.get('template_config', 'pipeline_template.config')
@@ -195,7 +197,10 @@ def automated_training_loop(config):
     all_videos_dataset = train_dataset + test_dataset[0]
 
     # PRE B: Generate label_map with valid classes used to annotate/train 
-    label_map = generate_label_map(classes)
+    if build_incremental_map:
+        label_map = {}
+    else:
+        label_map = generate_label_map(classes)
 
 
     # PRE C: Generate detection files for all training and test videos using groundtruths
@@ -351,8 +356,6 @@ def automated_training_loop(config):
         
             # i. Run detections using new model on all videos of the test_ds
             # FIXME: Should the test input data be resized?
-            print(test_ds[0])
-            print(type(test_ds[0]))
             try:
                 test_args = [
                     {
