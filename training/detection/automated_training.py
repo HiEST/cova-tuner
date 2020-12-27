@@ -133,8 +133,8 @@ def automated_training_loop(config):
     classes = annotation.get('classes', 'car,person,traffic light,motorcycle,truck,bus').split(',')
     min_annotation_score = annotation.getfloat('min_annotation_score', 0.5)
     frame_skipping = annotation.getint('frame_skipping', 5)
-    allow_partial_map = annotation.getboolean('allow_partial_map', True)
-    accumulative_dataset = annotation.getboolean('accumulative_dataset', True)
+    use_only_classes_on_dataset = annotation.getboolean('use_only_classes_on_dataset', True)
+    incremental_dataset = annotation.getboolean('incremental_dataset', True)
 
     train_config = config['train']
     template_config = train_config.get('template_config', 'pipeline_template.config')
@@ -195,12 +195,15 @@ def automated_training_loop(config):
         sorted([v for v in Path(test_dataset_path[1]).glob('*.mkv')])
     ]
     all_videos_dataset = train_dataset + test_dataset[0]
+    trained_videos = []
 
     # PRE B: Generate label_map with valid classes used to annotate/train 
-    if build_incremental_map:
+    if use_only_classes_on_dataset:
         label_map = {}
+        dataset_classes = []
     else:
         label_map = generate_label_map(classes)
+        dataset_classes = classes
 
 
     # PRE C: Generate detection files for all training and test videos using groundtruths
@@ -271,7 +274,7 @@ def automated_training_loop(config):
 
         # 1. Annotate video.
         # If the video was previously annotated during another experiment, don't repeat
-        if not os.path.exists('{}/train.record'.format(data_dir)):
+        if not os.path.exists('{}/train_label.csv'.format(data_dir)):
             annotate_video(
                 filename=str(train_video),
                 groundtruth='{}/{}.pkl'.format(gt_dir, train_video_id),
@@ -285,17 +288,48 @@ def automated_training_loop(config):
                 max_boxes=10,
                 img_format='jpg'
             )
+        else:
+            print(f'Skipping annotation of {train_video_id} because it has been found.')
         
         pbar.set_description(pipeline_desc[1])
         pbar.update(1)
         # 2. Generate train.record and test.record using csv with annotations
+        # 2.1 First, add new classes found to label_map, if any.
         for dataset in ['train', 'test']:
-            generate_tfrecord(
-                '{}/{}.record'.format(data_dir, dataset),
-                '{}/{}'.format(images_dir, dataset),
-                '{}/{}_label.csv'.format(data_dir, dataset),
-                label_map
-            ) 
+            # Read csv with annotations from train_video
+            classes_in_train_video = pd.read_csv('{}/{}'.format(dataset))['class'].unique()
+            new_classes = [c 
+                           for c in classes 
+                           if c in classes_in_train_video and c not in dataset_classes
+            ]
+            # Add to dataset_classes at the end
+            if len(new_classes) > 0:
+                dataset_classes += new_classes
+                label_map = generate_label_map(dataset_classes)
+                print(f'Added {len(new_classes)} new classes to dataset classes ({dataset_classes})')
+
+        # 2.2 If incremental_dataset is True, create a new joint tfrecord with all previous datasets
+        for dataset in ['train', 'test']:
+            if incremental_dataset is True:
+                # Get all image directories
+                images_path = Path(datasets_dir).glob('**/*images/{}'.format(dataset))
+                img_dirs = [img_dir 
+                            for img_dir in images_path
+                            if any([v in str(img_dir) for v in trained_videos])]
+                csv_files = [csv for csv in Path(datasets_dir).glob('**/{}_label.csv'.format(dataset))]
+                generate_joint_tfrecord(
+                    '{}/{}.record'.format(data_dir, dataset),
+                    img_dirs,
+                    csv_files,
+                    label_map
+                )
+            else:
+                generate_tfrecord(
+                    '{}/{}.record'.format(data_dir, dataset),
+                    '{}/{}'.format(images_dir, dataset),
+                    '{}/{}_label.csv'.format(data_dir, dataset),
+                    label_map
+                ) 
 
         pbar.set_description(pipeline_desc[2])
         pbar.update(1)
@@ -316,7 +350,7 @@ def automated_training_loop(config):
             output=pipeline_config_file,
             checkpoint=latest_checkpoint,
             data_dir=data_dir,
-            classes=classes,
+            classes=dataset_classes,
             batch_size=batch_size
         )
 
@@ -369,7 +403,7 @@ def automated_training_loop(config):
                                                     test_video.stem
                                                 ),
                         # 'detector': deepcopy(detector),
-                        'classes': classes,
+                        'classes': dataset_classes,
                         'detector': detector,
                         'min_score': min_test_score,
                         'max_boxes': max_test_boxes,
@@ -417,6 +451,7 @@ def automated_training_loop(config):
         shutil.move(str(train_video), str(test_dataset_path[1]))
         # ii. Add video to the test_dataset list
         test_dataset[1].append(train_video)
+        trained_videos.append(train_video_id)
 
 
 def main():
