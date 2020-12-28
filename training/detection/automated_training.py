@@ -19,7 +19,7 @@ sys.path.append('../../')
 from dnn.utils import detect_video, annotate_video, \
                     generate_label_map, generate_detection_files, \
                     configure_pipeline, read_pickle, to_pickle
-from dnn.tfrecord import generate_tfrecord
+from dnn.tfrecord import generate_tfrecord, generate_joint_tfrecord
 from dnn.tftrain import train_loop, export_trained_model, load_saved_model
 
 
@@ -275,6 +275,7 @@ def automated_training_loop(config):
         # 1. Annotate video.
         # If the video was previously annotated during another experiment, don't repeat
         if not os.path.exists('{}/train_label.csv'.format(data_dir)):
+            # import pdb; pdb.set_trace()
             annotate_video(
                 filename=str(train_video),
                 groundtruth='{}/{}.pkl'.format(gt_dir, train_video_id),
@@ -297,7 +298,7 @@ def automated_training_loop(config):
         # 2.1 First, add new classes found to label_map, if any.
         for dataset in ['train', 'test']:
             # Read csv with annotations from train_video
-            classes_in_train_video = pd.read_csv('{}/{}'.format(dataset))['class'].unique()
+            classes_in_train_video = pd.read_csv('{}/{}_label.csv'.format(data_dir, dataset))['class'].unique()
             new_classes = [c 
                            for c in classes 
                            if c in classes_in_train_video and c not in dataset_classes
@@ -315,8 +316,13 @@ def automated_training_loop(config):
                 images_path = Path(datasets_dir).glob('**/*images/{}'.format(dataset))
                 img_dirs = [img_dir 
                             for img_dir in images_path
-                            if any([v in str(img_dir) for v in trained_videos])]
-                csv_files = [csv for csv in Path(datasets_dir).glob('**/{}_label.csv'.format(dataset))]
+                            if any([v in str(img_dir) for v in trained_videos+[train_video_id]])]
+                csv_files = [
+                        csv 
+                        for csv in Path(datasets_dir).glob('**/{}_label.csv'.format(dataset))
+                        if any([v in str(csv) for v in trained_videos+[train_video_id]])]
+                print('Image dirs: {}'.format(img_dirs))
+                print('csv files: {}'.format(csv_files))
                 generate_joint_tfrecord(
                     '{}/{}.record'.format(data_dir, dataset),
                     img_dirs,
