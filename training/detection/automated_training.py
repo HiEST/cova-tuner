@@ -5,6 +5,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import configparser
 from copy import deepcopy
+import multiprocessing as mp
 import os
 from pathlib import Path
 import shlex  # split str commandfor sp
@@ -20,7 +21,9 @@ from dnn.utils import detect_video, annotate_video, \
                     generate_label_map, generate_detection_files, \
                     configure_pipeline, read_pickle, to_pickle
 from dnn.tfrecord import generate_tfrecord, generate_joint_tfrecord
-from dnn.tftrain import train_loop, export_trained_model, load_saved_model
+from dnn.tftrain import train_loop, eval_continuously, \
+                    export_trained_model, load_saved_model, \
+                    set_gpu_config
 
 
 def eval_detector(args):
@@ -147,6 +150,7 @@ def automated_training_loop(config):
     min_test_score_gt = test_config.getfloat('min_test_score_gt', 0.5)
     max_test_workers = test_config.getint('max_workers', 1)
 
+    set_gpu_config()
 
     # Make sure all directories exist and create those that don't contain required data
     if not os.path.exists(gt_dir):
@@ -195,7 +199,7 @@ def automated_training_loop(config):
         sorted([v for v in Path(test_dataset_path[1]).glob('*.mkv')])
     ]
     all_videos_dataset = train_dataset + test_dataset[0]
-    trained_videos = []
+    trained_videos = [v.stem for v in test_dataset[1]]  # All videos in test_dataset[1] have been already used to train
 
     # PRE B: Generate label_map with valid classes used to annotate/train 
     if use_only_classes_on_dataset:
@@ -221,7 +225,7 @@ def automated_training_loop(config):
             print('\t{}'.format(gt))
         sys.exit(1)
 
-    for i in trange(len(all_videos_dataset), desc="Generating all groundtruth files in advance", file=sys.__stdout__):
+    for i in trange(len(all_videos_dataset), desc="Generating all groundtruth files in advance", file=sys.__stderr__):
         test_video = all_videos_dataset[i]
         test_video_id = test_video.stem
         pickle_path = '{}/{}.pkl'.format(gt_dir, test_video_id)
@@ -356,8 +360,9 @@ def automated_training_loop(config):
             output=pipeline_config_file,
             checkpoint=latest_checkpoint,
             data_dir=data_dir,
+            model_dir=train_model_dir,
             classes=dataset_classes,
-            batch_size=batch_size
+            batch_size=batch_size,
         )
 
         pbar.set_description(pipeline_desc[3])
@@ -368,7 +373,22 @@ def automated_training_loop(config):
             pbar.update(1)  # Compensate for step 5.
         else:
 
-            # 4. Launch training with latest checkpoint
+            # 4.1 Launch a separate process to monitor evaluation
+            eval_proc = mp.Process(target=eval_continuously,
+                                   args=(
+                                       pipeline_config_file,
+                                       train_model_dir,  # model_dir
+                                       train_model_dir,  # checkpoint_dir
+                                       num_train_steps,
+                                       30,  # wait_interval
+                                       360
+                                   ))
+            eval_proc.start()
+            print(f'evaluation process started with pid {eval_proc.pid}')
+            if eval_proc.exitcode is not None:
+                print(f'evaluation process exited after start with code {eval_proc.exitcode}')
+
+            # 4.2 Launch training with latest checkpoint
             train_loop(
                 pipeline_config=pipeline_config_file,
                 model_dir=train_model_dir,
@@ -383,6 +403,15 @@ def automated_training_loop(config):
                 trained_checkpoint_dir=train_model_dir,
                 output_dir=exported_model_dir
             )
+
+            # 4.3 stop eval_proc (we place it after export to give it more time to process last checkpoint)
+            eval_proc.join(360)
+            if eval_proc.exitcode is None:
+                eval_proc.terminate()
+                print(f'evaluation process has been terminated.')
+            else:
+                print(f'evaluation process terminated correctly.')
+            # eval_proc.close()
 
         pbar.set_description(pipeline_desc[5])
         pbar.update(1)

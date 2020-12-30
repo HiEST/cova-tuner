@@ -44,7 +44,7 @@ def detect_video(filename,
             resize.append(width)
 
     frames_skipped = 0
-    for frame_id in trange(total_frames, desc='Detecting video contents', file=sys.__stdout__):
+    for frame_id in trange(total_frames, desc='Detecting video contents', file=sys.__stderr__):
         if skip_frames > 0:
             if skip_frames > frames_skipped:
                 frames_skipped += 1
@@ -183,13 +183,16 @@ def annotate_video(filename,
     width, height, _ = frame.shape
 
     if reshape is not None:
-        height = reshape[0]
+        new_height = reshape[0]
         if len(reshape) == 1:  # Only height is set, calculate width keeping aspect ratio
-            width = (reshape[0] / frame.shape[0]) * frame.shape[1]
-            reshape.append(int(width))
-        width = reshape[1]
-        reshape_width = reshape[0] / width
-        reshape_height = reshape[1] / height
+            new_width = (new_height / frame.shape[0]) * frame.shape[1]
+            reshape.append(int(new_width))
+        new_width = reshape[1]
+        reshape_height = new_height / frame.shape[0]
+        reshape_width = new_width / frame.shape[1]
+
+        height = new_height
+        width = new_width
     else:
         reshape_width = 1
         reshape_height = 1
@@ -197,7 +200,7 @@ def annotate_video(filename,
     gt_detections = pd.read_pickle(groundtruth, "bz2")
     annotations = []
     frame_id = 0
-    for frame_id in trange(total_frames, desc='Processing frames', file=sys.__stdout__):  #while ret:
+    for frame_id in trange(total_frames, desc='Processing frames', file=sys.__stderr__):  #while ret:
         detections = gt_detections[gt_detections.frame == frame_id]
         if len(detections) > 0:
             # Resize image before writing it to disk
@@ -222,6 +225,10 @@ def annotate_video(filename,
                     ymin = int(ymin * reshape_height)
                     ymax = int(ymax * reshape_height)
                     
+                    assert xmin >= 0.0 and xmin <= width
+                    assert xmax >= 0.0 and xmax <= width
+                    assert ymin >= 0.0 and ymin <= height
+                    assert ymax >= 0.0 and ymax <= height
                     annotations.append([filename, width, height, class_name, xmin, ymin, xmax, ymax])
 
             if boxes_saved > 0:
@@ -280,7 +287,7 @@ def generate_label_map(classes):
     return label_map
 
 
-def configure_pipeline(template, output, checkpoint, data_dir, classes, batch_size): 
+def configure_pipeline(template, output, checkpoint, data_dir, model_dir, classes, batch_size): 
     # Generate label_map.pbtxt
     label_map_entries = [
         'item {\n'
@@ -293,16 +300,18 @@ def configure_pipeline(template, output, checkpoint, data_dir, classes, batch_si
     label_map = '\n'.join(label_map_entries)
     num_classes = len(classes)
 
-    with open('{}/label_map.pbtxt'.format(data_dir), 'w') as f:
+    with open('{}/label_map.pbtxt'.format(model_dir), 'w') as f:
         f.write(label_map)
 
+    os.makedirs('{}/vis'.format(model_dir), exist_ok=True)
     pipeline_params = {
         'NUM_CLASSES': str(num_classes),
-        'LABEL_MAP': '{}/label_map.pbtxt'.format(data_dir),
+        'LABEL_MAP': '{}/label_map.pbtxt'.format(model_dir),
         'BATCH_SIZE': str(batch_size),
         'CHECKPOINT': checkpoint,
         'TRAIN_TFRECORD': '{}/train.record'.format(data_dir),
         'EVAL_TFRECORD': '{}/test.record'.format(data_dir),
+        'VIS_EXPORT_DIR': '{}/vis'.format(model_dir)
     }
 
     with open(template, 'r') as f:

@@ -54,6 +54,9 @@ def create_tf_example(group, path, id_map):
         classes_text.append(row['class'].encode('utf8'))
         classes.append(id_map[row['class']])
 
+    assert max(xmins + xmaxs + ymins + ymaxs) <= 1.1
+    assert min(xmins + xmaxs + ymins + ymaxs) >= 0.0
+
     tf_example = tf.train.Example(features=tf.train.Features(feature={
         'image/height': dataset_util.int64_feature(height),
         'image/width': dataset_util.int64_feature(width),
