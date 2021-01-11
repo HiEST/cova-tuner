@@ -168,7 +168,6 @@ def annotate_video(filename,
                    data_dir,
                    valid_classes,
                    label_map=None,
-                   val_ratio=0.2,
                    reshape=None,
                    min_score=0.5,
                    max_boxes=10,
@@ -243,36 +242,42 @@ def annotate_video(filename,
     df = pd.DataFrame(annotations, columns=columns)
 
     all_images = df.filename.unique()
-    train_imgs, test_imgs = train_test_split(all_images, test_size=val_ratio)
+    df.to_csv('{}/annotations.csv'.format(data_dir), index=None)
+    return df
+    # if len(all_images) >= 10:
+    #     train_imgs, test_imgs = train_test_split(all_images, test_size=val_ratio)
+    # else:
+    #     return False, False
 
-    train_dataset = df[df.filename.isin(train_imgs)]
-    test_dataset = df[df.filename.isin(test_imgs)]
+    # train_dataset = df[df.filename.isin(train_imgs)]
+    # test_dataset = df[df.filename.isin(test_imgs)]
 
-    # Create train/test subfolders
-    os.makedirs('{}/train'.format(images_dir), exist_ok=True)
-    os.makedirs('{}/test'.format(images_dir), exist_ok=True)
-    for img in train_dataset.filename.unique():
-        try:
-            shutil.move('{}/{}'.format(images_dir, img),
-                        '{}/train/{}'.format(images_dir, img))
-        except:
-            print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
-            raise
-    for img in test_dataset.filename.unique():
-        try:
-            shutil.move('{}/{}'.format(images_dir, img),
-                        '{}/test/{}'.format(images_dir, img))
-        except:
-            print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
-            raise
+    # # Create train/test subfolders
+    # os.makedirs('{}/train'.format(images_dir), exist_ok=True)
+    # os.makedirs('{}/test'.format(images_dir), exist_ok=True)
+    # for img in train_dataset.filename.unique():
+    #     try:
+    #         shutil.move('{}/{}'.format(images_dir, img),
+    #                     '{}/train/{}'.format(images_dir, img))
+    #     except:
+    #         print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
+    #         raise
 
-    # Commented out because the right full relative path is set during .record creation
-    # train_dataset['filename'] = train_dataset['filename'].apply(lambda x: '{}/train/{}'.format(images_dir, x))
-    # test_dataset['filename'] = test_dataset['filename'].apply(lambda x: '{}/test/{}'.format(images_dir, x))
-    train_dataset.to_csv('{}/train_label.csv'.format(data_dir), index=None)
-    test_dataset.to_csv('{}/test_label.csv'.format(data_dir), index=None)
+    # for img in test_dataset.filename.unique():
+    #     try:
+    #         shutil.move('{}/{}'.format(images_dir, img),
+    #                     '{}/test/{}'.format(images_dir, img))
+    #     except:
+    #         print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
+    #         raise
 
-    return train_dataset, test_dataset
+    # # Commented out because the right full relative path is set during .record creation
+    # # train_dataset['filename'] = train_dataset['filename'].apply(lambda x: '{}/train/{}'.format(images_dir, x))
+    # # test_dataset['filename'] = test_dataset['filename'].apply(lambda x: '{}/test/{}'.format(images_dir, x))
+    # train_dataset.to_csv('{}/train_label.csv'.format(data_dir), index=None)
+    # test_dataset.to_csv('{}/test_label.csv'.format(data_dir), index=None)
+
+    # return train_dataset, test_dataset
 
 
 def generate_label_map(classes):
@@ -287,7 +292,7 @@ def generate_label_map(classes):
     return label_map
 
 
-def configure_pipeline(template, output, checkpoint, data_dir, model_dir, classes, batch_size): 
+def configure_pipeline(template, output, checkpoint, tfrecord_dir, data_dir, model_dir, classes, batch_size): 
     # Generate label_map.pbtxt
     label_map_entries = [
         'item {\n'
@@ -309,8 +314,8 @@ def configure_pipeline(template, output, checkpoint, data_dir, model_dir, classe
         'LABEL_MAP': '{}/label_map.pbtxt'.format(model_dir),
         'BATCH_SIZE': str(batch_size),
         'CHECKPOINT': checkpoint,
-        'TRAIN_TFRECORD': '{}/train.record'.format(data_dir),
-        'EVAL_TFRECORD': '{}/test.record'.format(data_dir),
+        'TRAIN_TFRECORD': '{}/train.record'.format(tfrecord_dir),
+        'EVAL_TFRECORD': '{}/test.record'.format(tfrecord_dir),
         'VIS_EXPORT_DIR': '{}/vis'.format(model_dir)
     }
 
