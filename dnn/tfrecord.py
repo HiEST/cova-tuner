@@ -42,7 +42,6 @@ def split(df, group):
 
 
 def create_tf_example(group, path, id_map):
-    print(group.filename)
     with tf.gfile.GFile(os.path.join(path, '{}'.format(group.filename)), 'rb') as fid:
         encoded_jpg = fid.read()
     encoded_jpg_io = io.BytesIO(encoded_jpg)
@@ -118,7 +117,6 @@ def generate_joint_tfrecord(output_path, images_dirs, csv_inputs, label_map=None
 
 
 def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes=None, write_test=False): 
-    print('Generating tfrecord')
     writer = tf.python_io.TFRecordWriter(output_path)
     all_annotations = None
     for csv in csv_inputs:
@@ -135,15 +133,26 @@ def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes
     else:
         valid_annotations = all_annotations[all_annotations['class'].isin(valid_classes)]
 
-    valid_ratio = len(valid_annotations) / len(all_annotations)
-    if valid_ratio <= ratio:
+    valid_ratio = len(valid_annotations.filename.unique()) / len(all_annotations.filename.unique())
+
+    # If ratio > 1, it represents the maximum number of images in tfrecord.
+    if ratio > 1:
+        if len(valid_annotations) > ratio:
+            ratio = ratio / len(valid_annotations)
+        else:
+            ratio = 1
+    elif valid_ratio <= ratio:
         ratio = 1
     else:
         ratio = (ratio / valid_ratio)
 
     # FIXME: ratio works now wrt number of annotations, not images/frames
     valid_filenames = valid_annotations.filename.unique()
-    selected_imgs, _ = train_test_split(valid_filenames, test_size=1-ratio)
+    if ratio < 1:
+        selected_imgs, _ = train_test_split(valid_filenames, test_size=1-ratio)
+    else:
+        selected_imgs = valid_filenames
+
     selected_annotations = valid_annotations[valid_annotations.filename.isin(selected_imgs)]
     # since we used train_test_split over filenames, selected_annotations is not shuffled.
     # shuffle selected_annotations or they'll be ordered in tfrecord.

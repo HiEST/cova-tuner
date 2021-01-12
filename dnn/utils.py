@@ -292,6 +292,25 @@ def generate_label_map(classes):
     return label_map
 
 
+def load_pbtxt(filename):
+    label_map = {}
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+
+    label = ''
+    for l in lines:
+        if 'name' in l:
+            label = l.split('"')[1]
+        elif 'id' in l:
+            class_id = int(l.split(':')[1])
+            label_map[class_id] = {
+                'name': label,
+                'id': class_id
+            }
+
+    return label_map
+
+
 def configure_pipeline(template, output, checkpoint, tfrecord_dir, data_dir, model_dir, classes, batch_size): 
     # Generate label_map.pbtxt
     label_map_entries = [

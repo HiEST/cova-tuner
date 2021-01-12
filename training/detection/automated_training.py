@@ -17,10 +17,10 @@ import pandas as pd
 from tqdm import tqdm, trange
 
 sys.path.append('../../')
-from dnn.utils import detect_video, annotate_video, \
+from dnn.utils import detect_video, annotate_video, load_pbtxt, \
                     generate_label_map, generate_detection_files, \
                     configure_pipeline, read_pickle, to_pickle
-from dnn.tfrecord import generate_tfrecord, generate_joint_tfrecord
+from dnn.tfrecord import generate_tfrecord_from_csv
 from dnn.tftrain import train_loop, eval_continuously, \
                     export_trained_model, load_saved_model, \
                     set_gpu_config
@@ -40,7 +40,15 @@ def eval_detector(args):
     label_map = args['label_map'] 
     classes = args['classes']
 
-    if not os.path.exists('{}/results/results.txt'.format(output_dir)):
+    test_results = None
+    pkl_file = '{}/{}.pkl'.format(output_dir, test_video_id)
+    if os.path.exists(pkl_file):
+        test_results = read_pickle(pkl_file)
+        if len(test_results) == 0:
+            print(f'Recovered {pkl_file} but it has no detections. Trying again.')
+            os.remove(pkl_file)
+
+    if not os.path.exists(pkl_file):
         test_results = detect_video(
             filename=str(test_video),
             detector=detector,
@@ -59,7 +67,10 @@ def eval_detector(args):
 
         # Save test_results detections to pickle for debugging/post-processing purposes
         to_pickle(test_results, '{}/{}.pkl'.format(output_dir, test_video_id))
+    else:
+        print(f'Skipping detection. {pkl_file} already exists.')
 
+    if not os.path.exists('{}/{}_0.txt'.format(output_dir, test_video_id)):
         generate_detection_files(
             detections=test_results,
             output_dir=output_dir,
@@ -68,7 +79,7 @@ def eval_detector(args):
             groundtruth=False,
             threshold=.0  # FIXME: Should we set a threshold or use every single detection
         )
-
+        
         gt_detections_path = '{}/{}/groundtruths'.format(detection_files_path, test_video_id)
         if os.path.exists('{}/results'.format(output_dir)):  # pascalvoc.py will stall if the folder is not empty
             print('{}/results already exists. Must be emptied before calling pascalvoc or it\'ll stall.'.format(output_dir))
@@ -78,13 +89,10 @@ def eval_detector(args):
         cmdline_str = f'python {root_dir}/{pascalvoc} --det {root_dir}/{output_dir} -detformat xyrb ' +\
                       f'-gt {root_dir}/{gt_detections_path} -gtformat xyrb -np ' +\
                       f'--classes "{",".join(classes)}" -sp {root_dir}/{output_dir}/results'
-        # print(f'Launching pascalvoc.py ({cmdline_str})')
+        # print(f'Launching pascalvoc.py: {cmdline_str}')
         cmdline = shlex.split(cmdline_str)
         proc = sp.Popen(cmdline, stdout=sp.PIPE, stderr=sp.PIPE)
         out, err = proc.communicate()
-        # print('pascalvoc output:')
-        # print(out.decode('utf-8'))
-        # print(err.decode('utf-8'))
 
     # Initialize accuracy of all classes because some result files don't contain all of them
     accuracy = {
@@ -114,22 +122,59 @@ def eval_detector(args):
     # pbar.update(1)
     return accuracy
 
- 
+
+def annotate_videos_parallel(args):
+    test_video = str(args['test_video'])
+    test_video_id = args['test_video'].stem
+    
+    gt_dir = args['gt_dir']
+    datasets_dir = args['datasets_dir']
+    data_dir = '{}/{}/data'.format(datasets_dir, test_video_id)
+    images_dir = '{}/{}/images'.format(datasets_dir, test_video_id)
+    if os.path.exists('{}/annotations.csv'.format(data_dir)):
+        print(f'{test_video_id} has been already annotated.')
+        return
+
+    os.makedirs(datasets_dir, exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
+    os.makedirs(images_dir, exist_ok=True)
+
+    min_annotation_score = args['min_annotation_score']
+    classes = args['classes']
+
+    annotate_video(
+                filename=str(test_video),
+                groundtruth='{}/{}.pkl'.format(gt_dir, test_video_id),
+                images_dir=images_dir,
+                data_dir=data_dir,
+                valid_classes=classes,
+                label_map=None,  # groundtruths are annotated with mscoco label_map
+                reshape=[320],
+                min_score=min_annotation_score,
+                max_boxes=10,
+                img_format='jpg'
+            )
+
+
 def automated_training_loop(config):
     # Global vars
     paths = config['paths']
     root_dir = paths['root_dir']
-    datasets_dir = paths.get('dataset_dir', 'datasets')
-    train_dir = paths.get('train_dir', 'training')
-    saved_models_dir = paths.get('saved_models_dir', 'trained_models')
     gt_dir = paths.get('gt_dir', '../../ground_truths/bcn/ref')
-    detection_files_path = paths.get('detetion_files_path', 'tmp')
     pascalvoc = paths.get('pascalvoc', '../../accuracy-metrics/pascalvoc.py')
 
-    train_dataset_path = paths.get('train_dataset_path', 'videos/train')
+    datasets_dir = paths.get('dataset_dir', 'datasets')
+    workspace_dir = paths.get('workspace', '.')
+
+    # Paths relative to workspace
+    train_dir = os.path.join(workspace_dir, paths.get('train_dir', 'training'))
+    saved_models_dir = os.path.join(workspace_dir, paths.get('saved_models_dir', 'trained_models'))
+    detection_files_path = os.path.join(workspace_dir, paths.get('detetion_files_path', 'tmp'))
+
+    train_dataset_path = os.path.join(workspace_dir, paths.get('train_dataset_path', 'videos/train'))
     test_dataset_path = [
-        '{}/0'.format(paths.get('test_dataset_path', 'videos/test')),
-        '{}/1'.format(paths.get('test_dataset_path', 'videos/test'))
+        '{}/{}/0'.format(workspace_dir, paths.get('test_dataset_path', 'videos/test')),
+        '{}/{}/1'.format(workspace_dir, paths.get('test_dataset_path', 'videos/test'))
     ]
 
     annotation = config['annotation']
@@ -137,12 +182,19 @@ def automated_training_loop(config):
     min_annotation_score = annotation.getfloat('min_annotation_score', 0.5)
     frame_skipping = annotation.getint('frame_skipping', 5)
     use_only_classes_on_dataset = annotation.getboolean('use_only_classes_on_dataset', True)
-    incremental_dataset = annotation.getboolean('incremental_dataset', True)
+
+    dataset_style = {}
+    dataset_ratio = {}
+    dataset_style['train'] = annotation.get('train_dataset_style', "current")
+    dataset_ratio['train'] = annotation.getfloat('train_dataset_ratio', 1.0)
+    dataset_style['test'] = annotation.get('test_dataset_style', "current")
+    dataset_ratio['test'] = annotation.getfloat('test_dataset_ratio', 1.0)
 
     train_config = config['train']
     template_config = train_config.get('template_config', 'pipeline_template.config')
     num_train_steps = train_config.getint('num_train_steps', 5000)
     batch_size = train_config.getint('batch_size', 32)
+    base_ckpt = train_config.get('base_ckpt', '')
    
     test_config = config['test']
     min_test_score = test_config.getfloat('min_test_score', 0.0)
@@ -198,7 +250,7 @@ def automated_training_loop(config):
         sorted([v for v in Path(test_dataset_path[0]).glob('*.mkv')]),
         sorted([v for v in Path(test_dataset_path[1]).glob('*.mkv')])
     ]
-    all_videos_dataset = train_dataset + test_dataset[0]
+    all_videos_dataset = train_dataset + test_dataset[0] + test_dataset[1]
     trained_videos = [v.stem for v in test_dataset[1]]  # All videos in test_dataset[1] have been already used to train
 
     # PRE B: Generate label_map with valid classes used to annotate/train 
@@ -225,7 +277,9 @@ def automated_training_loop(config):
             print('\t{}'.format(gt))
         sys.exit(1)
 
-    for i in trange(len(all_videos_dataset), desc="Generating all groundtruth files in advance", file=sys.__stderr__):
+    for i in trange(len(all_videos_dataset),
+            desc="Generating all groundtruth files in advance",
+            file=sys.__stderr__):
         test_video = all_videos_dataset[i]
         test_video_id = test_video.stem
         pickle_path = '{}/{}.pkl'.format(gt_dir, test_video_id)
@@ -243,6 +297,21 @@ def automated_training_loop(config):
             groundtruth=True,
             threshold=min_test_score_gt
         )
+
+    annotate_args = [{
+        'test_video': test_video,
+        'datasets_dir': datasets_dir,
+        'gt_dir': gt_dir,
+        'classes': classes,
+        'min_annotation_score': min_annotation_score
+    } for test_video in all_videos_dataset]
+
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = list(tqdm(
+            executor.map(annotate_videos_parallel, annotate_args),
+            total=len(annotate_args),
+            desc='Annotating videos',
+            file=sys.__stdout__))
 
     # Description for each step of the pipeline
     pipeline_desc = [
@@ -276,11 +345,14 @@ def automated_training_loop(config):
         os.makedirs(data_dir, exist_ok=True)
         os.makedirs(images_dir, exist_ok=True)
 
+        # ii. Create training subfolder
+        os.makedirs(train_model_dir, exist_ok=True)
+
         # 1. Annotate video.
         # If the video was previously annotated during another experiment, don't repeat
-        if not os.path.exists('{}/train_label.csv'.format(data_dir)):
+        if not os.path.exists('{}/annotations.csv'.format(data_dir)):
             # import pdb; pdb.set_trace()
-            annotate_video(
+            annotations = annotate_video(
                 filename=str(train_video),
                 groundtruth='{}/{}.pkl'.format(gt_dir, train_video_id),
                 images_dir=images_dir,
@@ -293,6 +365,10 @@ def automated_training_loop(config):
                 max_boxes=10,
                 img_format='jpg'
             )
+
+            if not all(annotations):
+                # The video didn't yeld enough detections, skip its training
+                continue
         else:
             print(f'Skipping annotation of {train_video_id} because it has been found.')
         
@@ -300,77 +376,129 @@ def automated_training_loop(config):
         pbar.update(1)
         # 2. Generate train.record and test.record using csv with annotations
         # 2.1 First, add new classes found to label_map, if any.
-        for dataset in ['train', 'test']:
-            # Read csv with annotations from train_video
-            classes_in_train_video = pd.read_csv('{}/{}_label.csv'.format(data_dir, dataset))['class'].unique()
-            new_classes = [c 
-                           for c in classes 
-                           if c in classes_in_train_video and c not in dataset_classes
-            ]
-            # Add to dataset_classes at the end
-            if len(new_classes) > 0:
-                dataset_classes += new_classes
-                label_map = generate_label_map(dataset_classes)
-                print(f'Added {len(new_classes)} new classes to dataset classes ({dataset_classes})')
+        # for dataset in ['train', 'test']:
 
         # 2.2 If incremental_dataset is True, create a new joint tfrecord with all previous datasets
-        for dataset in ['train', 'test']:
-            if incremental_dataset is True:
-                # Get all image directories
-                images_path = Path(datasets_dir).glob('**/*images/{}'.format(dataset))
-                img_dirs = [img_dir 
-                            for img_dir in images_path
-                            if any([v in str(img_dir) for v in trained_videos+[train_video_id]])]
-                csv_files = [
-                        csv 
-                        for csv in Path(datasets_dir).glob('**/{}_label.csv'.format(dataset))
-                        if any([v in str(csv) for v in trained_videos+[train_video_id]])]
-                print('Image dirs: {}'.format(img_dirs))
-                print('csv files: {}'.format(csv_files))
-                generate_joint_tfrecord(
-                    '{}/{}.record'.format(data_dir, dataset),
-                    img_dirs,
-                    csv_files,
-                    label_map
-                )
-            else:
-                generate_tfrecord(
-                    '{}/{}.record'.format(data_dir, dataset),
-                    '{}/{}'.format(images_dir, dataset),
-                    '{}/{}_label.csv'.format(data_dir, dataset),
-                    label_map
-                ) 
+        train_size = 0
+        if not os.path.exists('{}/label_map.pbtxt'.format(train_model_dir)):
+            for dataset in ['train', 'test']:
+                # if dataset_style[dataset] in ['current', 'incremental']:
+                #     print(f'FIXME')
+                #     sys.exit(1)
+
+                #     # Read csv with annotations from train_video
+                #     classes_in_train_video = pd.read_csv('{}/{}_label.csv'.format(data_dir, dataset))['class'].unique()
+                #     new_classes = [c 
+                #                    for c in classes 
+                #                    if c in classes_in_train_video and c not in dataset_classes
+                #     ]
+                #     # Add to dataset_classes at the end
+                #     if len(new_classes) > 0:
+                #         dataset_classes += new_classes
+                #         label_map = generate_label_map(dataset_classes)
+                #         print(f'Added {len(new_classes)} new classes to dataset classes ({dataset_classes})')
+                
+                if dataset_style[dataset] == "current":
+                    csv_files = ['{}/{}/annotations.csv'.format(datasets_dir, train_video_id)]
+                    raise Exception  # FIXME
+                elif dataset_style[dataset] == "incremental":
+                    # FIXME: incremental is as of now broken as test dataset may contain train images.
+
+                    # Get paths to all annotations.csv
+                    annotations_path = Path(datasets_dir).glob('**/annotations.csv')
+                    csv_files = [
+                            str(csv) 
+                            for csv in annotations_path
+                            if any([v in str(csv) for v in trained_videos+[train_video_id]])]
+                    valid_classes = classes if dataset == 'train' else dataset_classes
+                    dataset_tfrecord = generate_tfrecord_from_csv(
+                        '{}/{}.record'.format(train_model_dir, dataset),
+                        csv_files,
+                        ratio=dataset_ratio[dataset],
+                        valid_classes=valid_classes
+                    )
+                elif dataset_style[dataset] == 'all':
+                    # Get paths to all annotations.csv
+                    annotations_path = Path(datasets_dir).glob('**/annotations.csv')
+                    ratio = dataset_ratio[dataset]
+                    if dataset == 'train':
+                        dataset_videos = [v.stem for v in train_dataset]
+                    else:
+                        dataset_videos = [v.stem for v in test_dataset[0]]
+                        ratio = dataset_ratio['test'] * train_size
+
+                    csv_files = [
+                            str(csv) 
+                            for csv in annotations_path
+                            if any([v in str(csv) for v in dataset_videos])]
+                    valid_classes = classes if dataset == 'train' else dataset_classes
+                    dataset_tfrecord = generate_tfrecord_from_csv(
+                        '{}/{}.record'.format(train_model_dir, dataset),
+                        csv_files,
+                        ratio=ratio,
+                        valid_classes=valid_classes
+                    )
+
+                if dataset == 'train':
+                    train_size = len(dataset_tfrecord)
+                    # Get classes in dataset in the same order as in the config file
+                    dataset_classes = [
+                            c
+                            for c in classes 
+                            if c in dataset_tfrecord['class'].unique()]
+                    label_map = generate_label_map(dataset_classes)
+        
+        else:  # Load label_map.pbtxt
+            label_map = load_pbtxt('{}/label_map.pbtxt'.format(train_model_dir))
+            dataset_classes = [c['name'] for c in label_map.values()]
 
         pbar.set_description(pipeline_desc[2])
         pbar.update(1)
         # 3. Configure Pipeline
         # i. Find latest checkpoint in the training folder
-        latest_checkpoint = str(sorted(Path(train_dir).glob('**/ckpt-*.index'),
+        checkpoints = sorted(Path(train_dir).glob('**/ckpt-*.index'),
                                        key=os.path.getmtime,
-                                       reverse=True)[0]).replace('.index', '')
+                                       reverse=True)
+                                       
+        # If no checkpoints found 
+        if len(checkpoints) == 0:
+            latest_checkpoint = base_ckpt
+        else:
+            # If there is a model trained with train_video, get that one.
+            latest_checkpoint = None
+            for ckpt in checkpoints:
+                if train_video_id in str(ckpt):
+                    latest_checkpoint = str(ckpt)
+                    print(f'Found checkpoint with train_video_id. Using it ({latest_checkpoint}).')
+                    break
+            if latest_checkpoint is None:
+                latest_checkpoint = str(checkpoints[0])
+            
+            latest_checkpoint = latest_checkpoint.replace('.index', '')
+
+        print(f'latest checkpoint found: {latest_checkpoint}')
 
         pipeline_config_file = '{}/{}/pipeline.config'.format(train_dir, train_video_id)
 
-        # ii. Create training subfolder
-        os.makedirs(train_model_dir, exist_ok=True)
-
-        # iii. Generate pipeline.config file base on template
-        configure_pipeline(
-            template=template_config,
-            output=pipeline_config_file,
-            checkpoint=latest_checkpoint,
-            data_dir=data_dir,
-            model_dir=train_model_dir,
-            classes=dataset_classes,
-            batch_size=batch_size,
-        )
+        # ii. Generate pipeline.config file base on template
+        if not os.path.exists(pipeline_config_file):
+            configure_pipeline(
+                template=template_config,
+                output=pipeline_config_file,
+                checkpoint=latest_checkpoint,
+                tfrecord_dir=train_model_dir,
+                data_dir=data_dir,
+                model_dir=train_model_dir,
+                classes=dataset_classes,
+                batch_size=batch_size,
+            )
 
         pbar.set_description(pipeline_desc[3])
         pbar.update(1)
 
         if train_video_id in latest_checkpoint:  
         # Means the latest checkpoint corresponds to the current training video
-            pbar.update(1)  # Compensate for step 5.
+            eval_proc = None
         else:
 
             # 4.1 Launch a separate process to monitor evaluation
@@ -380,8 +508,8 @@ def automated_training_loop(config):
                                        train_model_dir,  # model_dir
                                        train_model_dir,  # checkpoint_dir
                                        num_train_steps,
-                                       30,  # wait_interval
-                                       360
+                                       60,  # wait_interval
+                                       180
                                    ))
             eval_proc.start()
             print(f'evaluation process started with pid {eval_proc.pid}')
@@ -395,9 +523,10 @@ def automated_training_loop(config):
                 num_train_steps=num_train_steps
             )
 
-            pbar.set_description(pipeline_desc[4])
-            pbar.update(1)
-            # 5. Export trained model
+        # 5. Export trained model
+        pbar.set_description(pipeline_desc[4])
+        pbar.update(1)
+        if not os.path.exists('{}/saved_model/saved_model.pb'.format(exported_model_dir)):  
             export_trained_model(
                 pipeline_config_path=pipeline_config_file,
                 trained_checkpoint_dir=train_model_dir,
@@ -405,13 +534,14 @@ def automated_training_loop(config):
             )
 
             # 4.3 stop eval_proc (we place it after export to give it more time to process last checkpoint)
-            eval_proc.join(360)
-            if eval_proc.exitcode is None:
-                eval_proc.terminate()
-                print(f'evaluation process has been terminated.')
-            else:
-                print(f'evaluation process terminated correctly.')
-            # eval_proc.close()
+            if eval_proc is not None:
+                eval_proc.join(100)
+                if eval_proc.exitcode is None:
+                    eval_proc.terminate()
+                    print(f'evaluation process has been terminated.')
+                else:
+                    print(f'evaluation process terminated correctly.')
+                # eval_proc.close()
 
         pbar.set_description(pipeline_desc[5])
         pbar.update(1)
@@ -419,7 +549,12 @@ def automated_training_loop(config):
         # First, load the recently exported model
         detector = load_saved_model('{}/saved_model/'.format(exported_model_dir))
         test_accuracy = None  # DataFrame to store accuracies of all three test datasets
-        for test_ds_id, test_ds in enumerate([test_dataset[0], test_dataset[1], [train_video]]):
+        
+        if dataset_style['train'] == 'all':
+            train_videos_to_test = train_dataset
+        else:
+            train_videos_to_test = [train_video]
+        for test_ds_id, test_ds in enumerate([test_dataset[0], test_dataset[1], train_videos_to_test]):
             if len(test_ds) == 0:
                 continue
         
@@ -449,8 +584,9 @@ def automated_training_loop(config):
                     }
                     for test_video in test_ds
                 ]
-            except:
+            except Exception as e:
                 import pdb; pdb.set_trace()
+                print(str(e))
 
             dataset_accuracy = None
             with ThreadPoolExecutor(max_workers=max_test_workers) as executor:
@@ -485,8 +621,13 @@ def automated_training_loop(config):
         # i. Move video file
         shutil.move(str(train_video), str(test_dataset_path[1]))
         # ii. Add video to the test_dataset list
-        test_dataset[1].append(train_video)
+        new_video_path = '{}/{}'.format(test_dataset_path[1], train_video.name)
+        test_dataset[1].append(Path(new_video_path))
         trained_videos.append(train_video_id)
+        
+        # if we used all train videos for the dataset, we're done
+        if dataset_style['train'] == 'all':
+            break
 
 
 def main():
