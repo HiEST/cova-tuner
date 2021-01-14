@@ -10,6 +10,7 @@ import os
 import random
 import sys
 
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import tensorflow.compat.v1 as tf
@@ -123,6 +124,7 @@ def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes
         imgs_dir = '{}/images'.format('/'.join(csv.split('/')[:-2]))
         df = pd.read_csv(csv)
         df['filename'] = df['filename'].apply(lambda x: os.path.join(imgs_dir, x)) 
+        df['csv'] = csv
         if all_annotations is None:
             all_annotations = df
         else:
@@ -146,11 +148,19 @@ def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes
     else:
         ratio = (ratio / valid_ratio)
 
-    # FIXME: ratio works now wrt number of annotations, not images/frames
-    valid_filenames = valid_annotations.filename.unique()
+    # import pdb; pdb.set_trace()
     if ratio < 1:
-        selected_imgs, _ = train_test_split(valid_filenames, test_size=1-ratio)
+        valid_datasets = valid_annotations.csv.unique()
+        selected_imgs = np.array([])
+        for csv in valid_datasets:
+            csv_df = valid_annotations[valid_annotations.csv == csv]
+            csv_imgs = csv_df.filename.unique()
+            selected_csv_imgs, _ = train_test_split(csv_imgs, test_size=1-ratio)
+            selected_imgs = np.append(selected_imgs, selected_csv_imgs)
+        
+        # selected_imgs, _ = train_test_split(valid_filenames, test_size=1-ratio)
     else:
+        valid_filenames = valid_annotations.filename.unique()
         selected_imgs = valid_filenames
 
     selected_annotations = valid_annotations[valid_annotations.filename.isin(selected_imgs)]
