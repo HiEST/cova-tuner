@@ -26,6 +26,7 @@ from utils.datasets import IMAGENET, MSCOCO
 from utils.detector import init_detector, run_detector
 from utils.motion_detection import Background, MotionDetection
 from utils.nms import non_max_suppression_fast
+from dnn.utils import load_pbtxt
 
 url = 'http://localhost:5000/infer'
 
@@ -142,6 +143,9 @@ def main():
     args.add_argument("--no-average", help="use always first frame as background.", action="store_true")
     args.add_argument("--min-roi-size", type=int, nargs='+', default=(1,1), help="Model's input size")
     args.add_argument("--scale-roi", type=float, default=1, help="Factor to scale ROI")
+    args.add_argument("--save-bg", type=str, default=None, help="Save background as image to recover it later.")
+    args.add_argument("--load-bg", type=str, default=None, help="Path to background to load.")
+
 
     # App control
     args.add_argument("--start-after", type=int, default=0, help="Frames to skip before starting detection")
@@ -187,6 +191,14 @@ def main():
         cap.release()
         background.freeze() 
 
+        if config.save_bg is not None:
+            bg = background.background.copy()
+            cv2.imwrite(config.save_bg, bg)
+    elif config.load_bg is not None:
+        bg = cv2.imread(config.load_bg, cv2.IMREAD_UNCHANGED)
+        background.background = bg.copy()
+        background.freeze()
+
     input_size = config.input_size
     if input_size is None:
         input_size = (320,320)
@@ -213,6 +225,7 @@ def main():
                 else:
                     print(f'[ERROR] Model not found in {config.model}')
                     sys.exit(1)
+            
             else:
                 if config.model == 'resnet18':
                     classifier = resnet18(pretrained=True)
@@ -224,7 +237,14 @@ def main():
                     classifier = mobilenet_v2(pretrained=True)
                 label_map = IMAGENET
         else:
-            if config.model is not None:
+            if 'saved_model' in config.model:
+                detector = tf.saved_model.load(config.model)
+                label_map_path = [str(p) for p in Path(config.model).parents if 'saved_model' not in str(p)][0]
+                # label_map_path = '/'.join(label_map_path)
+                label_map_path = '{}/label_map.pbtxt'.format(label_map_path)
+                label_map = load_pbtxt(label_map_path)
+                print(f'Loading saved model {config.model} and label map {label_map_path}')
+            elif config.model is not None:
                 if config.model in ['ref', 'edge']:
                     detector = init_detector(config.model)
                 elif config.model == 'yolov5':
@@ -234,9 +254,10 @@ def main():
                     detector = get_instance_segmentation_model(config.model)
                     detector.eval()
                     framework = 'torch'
+                label_map = MSCOCO
             else:
                 detector = init_detector()
-            label_map = MSCOCO
+                label_map = MSCOCO
 
     # save_class = config.save_roi_class
     if config.save_rois is not None:
@@ -405,7 +426,7 @@ def main():
                     # if boxes[i] not in boxes_nms:
                     #     continue
                     class_id = int(class_ids[i])
-                    class_name = label_map[str(class_id)]['name']
+                    class_name = label_map[class_id]['name']
                     # if scores[i] >= 0.01:
                     #     print(f'{class_name}: {scores[i]:.3f}')
                     if scores[i] >= min_score:
@@ -420,7 +441,7 @@ def main():
                                                           roi[1] + ymin, roi[1] + ymax)
                         
 
-                        label = label_map[str(class_id)]['name']
+                        label = label_map[class_id]['name']
                         det = [frame_id, class_id, scores[i], int(left), int(top), int(right), int(bottom), roi_id, num_areas_to_detect]
                         detections.append(det)
 
