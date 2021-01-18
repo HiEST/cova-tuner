@@ -343,15 +343,15 @@ def main():
                 # if collage_limits['right'] >= frame.shape[1]:
                 #     collage_limits['bottom'] = collage_limits['bottom'] + (roi[3] - roi[1])
                 #     collage_limits['right'] = 0
-                border = 10
+                border = 100
 
                 cropped = original_frame[roi[1]:roi[3], roi[0]:roi[2]]
-                # cropped = cv2.copyMakeBorder(cropped, border, border, border, border, cv2.BORDER_CONSTANT, (0, 0, 0))
+                cropped = cv2.copyMakeBorder(cropped, border, border, border, border, cv2.BORDER_CONSTANT, (0, 0, 0))
                 if collage is None:
                     collage = cropped
                     collage_rois.append([
                         roi, # coords in original frame
-                        [0, 0, cropped.shape[1], cropped.shape[0]], # coords in collage
+                        [border, border, cropped.shape[1]-border, cropped.shape[0]-border], # coords in collage
                         0 # id roi
                     ])
                 else:
@@ -369,7 +369,7 @@ def main():
 
                         collage_rois.append([
                             roi, # coords in original frame
-                            [w1, 0, w1+w2, h2], # coords in collage
+                            [w1+border, border, w1+w2-border, h2-border], # coords in collage
                             len(collage_rois) # id roi
                         ])
                     else:
@@ -383,7 +383,7 @@ def main():
 
                         collage_rois.append([
                             roi, # coords in original frame
-                            [0, h1, w2, h1+h2], # coords in collage
+                            [border, h1+border, w2-border, h1+h2-border], # coords in collage
                             len(collage_rois) # id roi
                         ])
                  
