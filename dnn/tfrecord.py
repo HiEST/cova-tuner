@@ -7,7 +7,9 @@ from __future__ import absolute_import
 
 import io
 import os
+from pathlib import Path
 import random
+from shutil import copyfile
 import sys
 
 import numpy as np
@@ -117,12 +119,62 @@ def generate_joint_tfrecord(output_path, images_dirs, csv_inputs, label_map=None
     print('Successfully created the TFRecords: {}'.format(output_path))
 
 
-def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes=None, write_test=False): 
+def frame_skip(filenames, fs):
+    prev_selected = 0
+    if len(filenames) == 0:
+        return []
+    selected_fn = [filenames[0]]
+    for i, fn in enumerate(filenames[1:]):
+        if int(Path(fn).stem) >= (prev_selected + fs):
+            selected_fn.append(fn)
+            prev_selected = int(Path(fn).stem)
+
+    return selected_fn
+
+
+def generate_tfrecord_from_csv(
+        output_path,
+        csv_inputs,
+        ratio=1.0,
+        valid_classes=None,
+        frame_skipping=1,
+        write_test=False,
+        force_max_representation=False): 
     writer = tf.python_io.TFRecordWriter(output_path)
     all_annotations = None
+    random.shuffle(csv_inputs)
     for csv in csv_inputs:
         imgs_dir = '{}/images'.format('/'.join(csv.split('/')[:-2]))
         df = pd.read_csv(csv)
+        if frame_skipping > 1:
+            if valid_classes is None:
+                filenames = df.filename.unique()
+            else:
+                filenames = df[df['class'].isin(valid_classes)].filename.unique()
+
+            selected_fn = frame_skip(filenames, frame_skipping)
+            # selected_fn = [
+            #         fn
+            #         for i, fn in enumerate(filenames)
+            #         # if i%frame_skipping == 0
+            #         # Use frame_id in the name
+            #         if i == 0 or \
+            #                 int(Path(fn).stem) >= int(Path(filenames[i-1]).stem) + frame_skipping
+            # ]
+            # print(f'selected frames from {csv}:\n\t{selected_fn}')
+            # print(f'Originally had {len(df.filename.unique())}:\n\t{df.filename.unique()}')
+            # for i, fn in enumerate(filenames):
+            #     if i == 0:
+            #         print(f'[{i}] selected')
+            #     elif int(Path(fn).stem) >= int(Path(filenames[i-1]).stem) + frame_skipping:
+            #         print(f'[{i}] selected')
+            #     else:
+            #         print(f'[{i}] discarded')
+            #         print(f'\tframe_id: {int(Path(fn).stem)}')
+            #         print(f'\tprev frame_id: {int(Path(filenames[i-1]).stem)}')
+            #         print(f'\t+fs: {int(Path(filenames[i-1]).stem) + frame_skipping}')
+            df = df[df.filename.isin(selected_fn)]
+
         df['filename'] = df['filename'].apply(lambda x: os.path.join(imgs_dir, x)) 
         df['csv'] = csv
         if all_annotations is None:
@@ -138,9 +190,14 @@ def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes
     valid_ratio = len(valid_annotations.filename.unique()) / len(all_annotations.filename.unique())
 
     # If ratio > 1, it represents the maximum number of images in tfrecord.
+    min_num_files = 0
     if ratio > 1:
-        if len(valid_annotations) > ratio:
-            ratio = ratio / len(valid_annotations)
+        num_files = len(valid_annotations.filename.unique())
+        if num_files > ratio:
+            print(f'num files > ratio: {num_files} > {ratio}')
+            min_num_files = int(ratio)
+            max_num_files = int(ratio)
+            ratio = ratio / num_files
         else:
             ratio = 1
     elif valid_ratio <= ratio:
@@ -150,14 +207,37 @@ def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes
 
     # import pdb; pdb.set_trace()
     if ratio < 1:
-        valid_datasets = valid_annotations.csv.unique()
-        selected_imgs = np.array([])
-        for csv in valid_datasets:
-            csv_df = valid_annotations[valid_annotations.csv == csv]
-            csv_imgs = csv_df.filename.unique()
-            selected_csv_imgs, _ = train_test_split(csv_imgs, test_size=1-ratio)
-            selected_imgs = np.append(selected_imgs, selected_csv_imgs)
-        
+        if force_max_representation:
+            valid_datasets = valid_annotations.csv.unique()
+            selected_imgs = np.array([])
+            for csv in valid_datasets:
+                csv_df = valid_annotations[valid_annotations.csv == csv]
+                csv_imgs = csv_df.filename.unique()
+                print(f'train size: {ratio*len(csv_imgs)} (ratio={ratio})')
+                if ratio*len(csv_imgs) < 1:
+                    random.shuffle(csv_imgs)
+                    selected_csv_imgs = [csv_imgs[0]]
+                    # tmp_ratio = 1/len(csv_imgs)
+                    # selected_csv_imgs, _ = train_test_split(csv_imgs, test_size=1-tmp_ratio)
+                else:
+                    selected_csv_imgs, _ = train_test_split(csv_imgs, test_size=1-ratio)
+                selected_imgs = np.append(selected_imgs, selected_csv_imgs)
+        else:
+            valid_imgs = valid_annotations.filename.unique()
+            selected_imgs, _ = train_test_split(valid_imgs, test_size=1-ratio)
+            
+        if len(selected_imgs) < min_num_files:
+            not_yet_selected = valid_annotations[~valid_annotations.filename.isin(selected_imgs)].filename.unique()
+            left_to_select = int(min_num_files - len(selected_imgs))
+            print(f'{left_to_select} images left to select.')
+
+            random.shuffle(not_yet_selected)
+            selected_imgs = np.append(selected_imgs, not_yet_selected[:left_to_select])
+            print(f'now {len(selected_imgs)} images selected.')
+
+        elif len(selected_imgs) > max_num_files:
+            random.shuffle(selected_imgs)
+            selected_imgs = selected_imgs[:max_num_files]
         # selected_imgs, _ = train_test_split(valid_filenames, test_size=1-ratio)
     else:
         valid_filenames = valid_annotations.filename.unique()
@@ -180,6 +260,18 @@ def generate_tfrecord_from_csv(output_path, csv_inputs, ratio=1.0, valid_classes
 
     print_tfrecord_summary(valid_annotations, selected_annotations)
 
+    # Copy images to output_dir 
+    output_dir = Path(output_path).parent
+    dataset = 'train' if 'train' in Path(output_path).stem else 'test'
+    imgs_dir = '{}/images/{}/'.format(output_dir, dataset)
+    os.makedirs(imgs_dir, exist_ok=True)
+    for img in selected_annotations.filename.unique():
+        img_src = [p for p in img.split('/') if '2020' in str(p)][0]
+        print(f'img src {img_src}')
+        img_id = Path(img).stem
+        output_img = '{}/{}_{}.jpg'.format(imgs_dir, img_src, img_id)
+        print(f'Copying {img} to {output_img}')
+        copyfile(img, output_img)
     return selected_annotations
 
 
