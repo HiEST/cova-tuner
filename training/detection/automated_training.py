@@ -5,6 +5,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import configparser
 from copy import deepcopy
+from glob import glob
 import multiprocessing as mp
 import os
 from pathlib import Path
@@ -32,6 +33,7 @@ def eval_detector(args):
     pascalvoc = args['pascalvoc']
     root_dir = args['root_dir']
     detection_files_path = args['detection_files_path']
+    groundtruth_files_path = args['groundtruth_files_path']
     output_dir = args['output_dir']
 
     detector = args['detector']
@@ -80,7 +82,7 @@ def eval_detector(args):
             threshold=.0  # FIXME: Should we set a threshold or use every single detection
         )
         
-        gt_detections_path = '{}/{}/groundtruths'.format(detection_files_path, test_video_id)
+        gt_detections_path = '{}/{}/groundtruths'.format(groundtruth_files_path, test_video_id)
         if os.path.exists('{}/results'.format(output_dir)):  # pascalvoc.py will stall if the folder is not empty
             print('{}/results already exists. Must be emptied before calling pascalvoc or it\'ll stall.'.format(output_dir))
             shutil.rmtree('{}/results'.format(output_dir))
@@ -164,6 +166,7 @@ def automated_training_loop(config):
     pascalvoc = paths.get('pascalvoc', '../../accuracy-metrics/pascalvoc.py')
 
     datasets_dir = paths.get('dataset_dir', 'datasets')
+    groundtruth_files_path = paths.get('groundtruth_files_path', 'groundtruths')
     workspace_dir = paths.get('workspace', '.')
 
     # Paths relative to workspace
@@ -195,8 +198,10 @@ def automated_training_loop(config):
     num_train_steps = train_config.getint('num_train_steps', 5000)
     batch_size = train_config.getint('batch_size', 32)
     base_ckpt = train_config.get('base_ckpt', '')
+    checkpoint_every_n = train_config.getint('checkpoint_every_n', 1000 if num_train_steps > 1000 else num_train_steps)
    
     test_config = config['test']
+    skip_testing = test_config.getboolean('skip_testing', False)
     min_test_score = test_config.getfloat('min_test_score', 0.0)
     max_test_boxes = test_config.getint('max_test_boxes', 10)
     min_test_score_gt = test_config.getfloat('min_test_score_gt', 0.5)
@@ -237,6 +242,10 @@ def automated_training_loop(config):
         print('train_dir ({}) does not exist. Creating...'.format(train_dir))
         os.makedirs(train_dir)
 
+    if not os.path.exists(groundtruth_files_path):
+        print('Directory to store groundtruth files ({}) does not exist. Creating...'.format(groundtruth_files_path))
+        os.makedirs(groundtruth_files_path)
+
     if not os.path.exists(detection_files_path):
         print('Directory to store temporary detection files ({}) does not exist. Creating...'.format(detection_files_path))
         os.makedirs(detection_files_path)
@@ -245,10 +254,10 @@ def automated_training_loop(config):
         # i. one whole day never used for training
         # ii. all videos used in previous checkpoints. Will be moved from train_dataset
         # iii. same video used for current training iteration
-    train_dataset = sorted([v for v in Path(train_dataset_path).glob('*.mkv')])
+    train_dataset = sorted([Path(v) for v in glob('{}/**/*.mkv'.format(train_dataset_path), recursive=True)])
     test_dataset = [
-        sorted([v for v in Path(test_dataset_path[0]).glob('*.mkv')]),
-        sorted([v for v in Path(test_dataset_path[1]).glob('*.mkv')])
+        sorted([Path(v) for v in glob('{}/**/*.mkv'.format(test_dataset_path[0]), recursive=True)]),
+        sorted([Path(v) for v in glob('{}/**/*.mkv'.format(test_dataset_path[1]), recursive=True)])
     ]
     all_videos_dataset = train_dataset + test_dataset[0] + test_dataset[1]
     trained_videos = [v.stem for v in test_dataset[1]]  # All videos in test_dataset[1] have been already used to train
@@ -283,7 +292,7 @@ def automated_training_loop(config):
         test_video = all_videos_dataset[i]
         test_video_id = test_video.stem
         pickle_path = '{}/{}.pkl'.format(gt_dir, test_video_id)
-        output_dir = '{}/{}/groundtruths'.format(detection_files_path, test_video_id)
+        output_dir = '{}/{}/groundtruths'.format(groundtruth_files_path, test_video_id)
         if os.path.exists('{}/{}_0.txt'.format(output_dir, test_video_id)):
             continue
         os.makedirs(output_dir, exist_ok=True)
@@ -415,7 +424,8 @@ def automated_training_loop(config):
                         '{}/{}.record'.format(train_model_dir, dataset),
                         csv_files,
                         ratio=dataset_ratio[dataset],
-                        valid_classes=valid_classes
+                        valid_classes=valid_classes,
+                        frame_skipping=frame_skipping
                     )
                 elif dataset_style[dataset] == 'all':
                     # Get paths to all annotations.csv
@@ -425,7 +435,8 @@ def automated_training_loop(config):
                         dataset_videos = [v.stem for v in train_dataset]
                     else:
                         dataset_videos = [v.stem for v in test_dataset[0]]
-                        ratio = dataset_ratio['test'] * train_size
+                        if dataset_ratio['test'] < 1:  # test ds size is set wrt train size
+                            ratio = dataset_ratio['test'] * train_size
 
                     csv_files = [
                             str(csv) 
@@ -436,11 +447,13 @@ def automated_training_loop(config):
                         '{}/{}.record'.format(train_model_dir, dataset),
                         csv_files,
                         ratio=ratio,
-                        valid_classes=valid_classes
+                        valid_classes=valid_classes,
+                        frame_skipping=frame_skipping
                     )
 
                 if dataset == 'train':
                     train_size = len(dataset_tfrecord)
+                    print(f'Training dataset size: {train_size} with {len(dataset_tfrecord.filename.unique())} images.')
                     # Get classes in dataset in the same order as in the config file
                     dataset_classes = [
                             c
@@ -462,6 +475,7 @@ def automated_training_loop(config):
                                        
         # If no checkpoints found 
         if len(checkpoints) == 0:
+            # latest_checkpoint = os.path.join(root_dir, base_ckpt)
             latest_checkpoint = base_ckpt
         else:
             # If there is a model trained with train_video, get that one.
@@ -508,7 +522,7 @@ def automated_training_loop(config):
                                        train_model_dir,  # model_dir
                                        train_model_dir,  # checkpoint_dir
                                        num_train_steps,
-                                       60,  # wait_interval
+                                       20,  # wait_interval
                                        180
                                    ))
             eval_proc.start()
@@ -517,10 +531,12 @@ def automated_training_loop(config):
                 print(f'evaluation process exited after start with code {eval_proc.exitcode}')
 
             # 4.2 Launch training with latest checkpoint
+            # checkpoint_every_n = num_train_steps if num_train_steps < 1000 else 1000
             train_loop(
                 pipeline_config=pipeline_config_file,
                 model_dir=train_model_dir,
-                num_train_steps=num_train_steps
+                num_train_steps=num_train_steps,
+                checkpoint_every_n=checkpoint_every_n
             )
 
         # 5. Export trained model
@@ -554,66 +570,77 @@ def automated_training_loop(config):
             train_videos_to_test = train_dataset
         else:
             train_videos_to_test = [train_video]
-        for test_ds_id, test_ds in enumerate([test_dataset[0], test_dataset[1], train_videos_to_test]):
-            if len(test_ds) == 0:
-                continue
+
+        if not skip_testing:
+            for test_ds_id, test_ds in enumerate([test_dataset[0], test_dataset[1], train_videos_to_test]):
+                if len(test_ds) == 0:
+                    continue
+                if test_ds_id > 0:
+                    continue
+            
+                # i. Run detections using new model on all videos of the test_ds
+                # FIXME: Should the test input data be resized?
+                try:
+                    test_args = [
+                        {
+                            'test_video': test_video,
+                            'pascalvoc': pascalvoc,
+                            'root_dir': root_dir,
+                            'detection_files_path': detection_files_path,
+                            'groundtruth_files_path': groundtruth_files_path,
+                            'output_dir': '{}/{}/detections_{}'.format(
+                                                        detection_files_path,
+                                                        train_video_id,
+                                                        test_video.stem
+                                                    ),
+                            # 'detector': deepcopy(detector),
+                            'classes': dataset_classes,
+                            'detector': detector,
+                            'min_score': min_test_score,
+                            'max_boxes': max_test_boxes,
+                            # 'label_map': deepcopy(label_map),
+                            'label_map': label_map,
+                            # 'save_frame_to': None,
+                            # 'resize': None
+                        }
+                        for test_video in test_ds
+                    ]
+                except Exception as e:
+                    import pdb; pdb.set_trace()
+                    print(str(e))
+
+                dataset_accuracy = None
+                with ThreadPoolExecutor(max_workers=max_test_workers) as executor:
+                    results = list(tqdm(
+                        executor.map(eval_detector, test_args),
+                        total=len(test_args),
+                        desc='Evaluating videos',
+                        file=sys.__stdout__))
+                    for result in results:
+
+                        video_accuracy = result
+                        df = pd.DataFrame.from_dict(video_accuracy)
+                        if dataset_accuracy is None:
+                            dataset_accuracy = df 
+                        else:
+                            dataset_accuracy = dataset_accuracy.append(df, ignore_index=True)
+
+                # iv. Save csv with dataset accuracies and add averages to the global
+                dataset_accuracy.to_csv('{}/dataset_{}_accuracy.csv'.format(exported_model_dir, test_ds_id), index=False)
+
+                ds_mean = dataset_accuracy.mean() 
+                ds_mean['test_dataset'] = test_ds_id
+                if test_accuracy is None:
+                    test_accuracy = pd.DataFrame([], columns=ds_mean.keys())
+                test_accuracy = test_accuracy.append(ds_mean, ignore_index=True)
+
+            test_accuracy.to_csv('{}/test_accuracy.csv'.format(exported_model_dir), index=False)
+
+            trained_videos.append(train_video_id)
         
-            # i. Run detections using new model on all videos of the test_ds
-            # FIXME: Should the test input data be resized?
-            try:
-                test_args = [
-                    {
-                        'test_video': test_video,
-                        'pascalvoc': pascalvoc,
-                        'root_dir': root_dir,
-                        'detection_files_path': detection_files_path,
-                        'output_dir': '{}/{}/detections_{}'.format(
-                                                    detection_files_path,
-                                                    train_video_id,
-                                                    test_video.stem
-                                                ),
-                        # 'detector': deepcopy(detector),
-                        'classes': dataset_classes,
-                        'detector': detector,
-                        'min_score': min_test_score,
-                        'max_boxes': max_test_boxes,
-                        # 'label_map': deepcopy(label_map),
-                        'label_map': label_map,
-                        # 'save_frame_to': None,
-                        # 'resize': None
-                    }
-                    for test_video in test_ds
-                ]
-            except Exception as e:
-                import pdb; pdb.set_trace()
-                print(str(e))
-
-            dataset_accuracy = None
-            with ThreadPoolExecutor(max_workers=max_test_workers) as executor:
-                results = list(tqdm(
-                    executor.map(eval_detector, test_args),
-                    total=len(test_args),
-                    desc='Evaluating videos',
-                    file=sys.__stdout__))
-                for result in results:
-
-                    video_accuracy = result
-                    df = pd.DataFrame.from_dict(video_accuracy)
-                    if dataset_accuracy is None:
-                        dataset_accuracy = df 
-                    else:
-                        dataset_accuracy = dataset_accuracy.append(df, ignore_index=True)
-
-            # iv. Save csv with dataset accuracies and add averages to the global
-            dataset_accuracy.to_csv('{}/dataset_{}_accuracy.csv'.format(exported_model_dir, test_ds_id), index=False)
-
-            ds_mean = dataset_accuracy.mean() 
-            ds_mean['test_dataset'] = test_ds_id
-            if test_accuracy is None:
-                test_accuracy = pd.DataFrame([], columns=ds_mean.keys())
-            test_accuracy = test_accuracy.append(ds_mean, ignore_index=True)
-
-        test_accuracy.to_csv('{}/test_accuracy.csv'.format(exported_model_dir), index=False)
+        # if we used all train videos for the dataset, we're done
+        if dataset_style['train'] == 'all':
+            break
 
         pbar.set_description(pipeline_desc[6])
         pbar.update(1)
@@ -623,11 +650,7 @@ def automated_training_loop(config):
         # ii. Add video to the test_dataset list
         new_video_path = '{}/{}'.format(test_dataset_path[1], train_video.name)
         test_dataset[1].append(Path(new_video_path))
-        trained_videos.append(train_video_id)
         
-        # if we used all train videos for the dataset, we're done
-        if dataset_style['train'] == 'all':
-            break
 
 
 def main():
