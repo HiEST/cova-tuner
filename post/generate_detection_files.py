@@ -8,12 +8,13 @@ import sys
 import pandas as pd
 
 sys.path.append('../')
-from utils.datasets import MSCOCO as label_map
+from utils.datasets import MSCOCO
+from dnn.utils import load_pbtxt
 
 
-def generate_detection_files(detections, output_dir, prefix, ground_truth=False, threshold=0.0):
+def generate_detection_files(detections, output_dir, prefix, label_map, ground_truth=False, threshold=0.0):
     if 'label' not in detections.columns:
-        detections['label'] = detections.class_id.apply(lambda x: label_map[str(x)]['name'].replace(' ', '_'))
+        detections['label'] = detections.class_id.apply(lambda x: label_map[x]['name'].replace(' ', '_'))
     else:
         detections['label'] = detections.label.apply(lambda x: x.replace(' ', '_'))
 
@@ -41,6 +42,7 @@ def main():
     args.add_argument("--ground-truth", default=False, action="store_true", help="detections are ground-truth")
     args.add_argument("-o", "--output", default="detection_files/", type=str, help="path where detection files will be stored")
     args.add_argument("-p", "--prefix", default=None, type=str, help="prefix to name detection files")
+    args.add_argument("-l", "--labels", default=None, type=str, help="pbtxt file with labels")
     args.add_argument("-t", "--threshold", default=0, type=float, help="score threshold")
 
     args.add_argument('pickle')
@@ -51,8 +53,14 @@ def main():
     if prefix == None:
         prefix = Path(config.pickle).stem.split('.')[0]
 
+    if config.labels is not None:
+        label_map = load_pbtxt(config.labels)
+    else:
+        label_map = MSCOCO
+
+
     detections = pd.read_pickle(config.pickle, compression='bz2')
-    generate_detection_files(detections, config.output, prefix, config.ground_truth, config.threshold)
+    generate_detection_files(detections, config.output, prefix, label_map, config.ground_truth, config.threshold)
 
 if __name__ == "__main__":
     main()

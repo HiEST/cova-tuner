@@ -300,6 +300,7 @@ def main():
     frame_id = 0
     frames_since_first_detection = -1
     detections = []
+    prev_valid_detections = []
     while ret:
         if config.frame_skip > 0 and frame_id % config.frame_skip != 0:
             frame_id += 1
@@ -313,195 +314,227 @@ def main():
         if frame_id < config.start_after:
             motion_boxes = []
  
+        # collage = np.zeros(frame.shape, np.uint8)
+        # collage_limits = {
+        #     'right': 0,
+        #     'bottom': 0,
+        # }
+        collage = None
+        collage_rois = []
         if len(motion_boxes):
             original_frame = frame.copy()
             num_areas_to_detect = len([area for area in areas if area >= 2*config.min_area])
             for roi_id, roi in enumerate(motion_boxes):
                 if areas[roi_id] < 2*config.min_area:
                     continue
-                roi = scale_roi(roi, config.scale_roi, frame.shape)
-                cropped_roi = np.array(original_frame[roi[1]:roi[3], roi[0]:roi[2]])
 
-                infer_ts0 = time.time()
-                if config.no_infer:
-                    boxes = []
-                    scores = []
-                    class_ids = []
-                elif config.offload:
-                    ret, preds = offload_single_frame(cropped_roi, url, 'edge', 'tf')
-                    boxes = preds['boxes']
-                    scores = preds['scores']
-                    class_ids = preds['idxs']
+                # collage_roi = [
+                #     collage_limits['right'],                        # left
+                #     collage_limits['bottom'],                          # top
+                #     collage_limits['right'] + (roi[2] - roi[0]),    # right
+                #     collage_limits['bottom'] + (roi[3] - roi[1])       # bottom  
+                # ]
 
-                elif config.classify_only:
-                    transform = transforms.Compose([
-                        transforms.ToPILImage(),
-                        transforms.Resize((224, 224)),
-                        transforms.ToTensor(),
-                        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                             std=[0.229, 0.224, 0.225]) 
+                # print(f'collage roi:')
+                # print(f'\theight: {collage_roi[1]}:{collage_roi[3]}')
+                # print(f'\twidth: {collage_roi[0]}:{collage_roi[2]}')
+                # collage[collage_roi[1]:collage_roi[3], collage_roi[0]:collage_roi[2]] = np.array(original_frame[roi[1]:roi[3], roi[0]:roi[2]])
+                # collage_limits['right'] = collage_limits['right'] + (roi[2] - roi[0])
+                # if collage_limits['right'] >= frame.shape[1]:
+                #     collage_limits['bottom'] = collage_limits['bottom'] + (roi[3] - roi[1])
+                #     collage_limits['right'] = 0
+                border = 100
+
+                cropped = original_frame[roi[1]:roi[3], roi[0]:roi[2]]
+                cropped = cv2.copyMakeBorder(cropped, border, border, border, border, cv2.BORDER_CONSTANT, (0, 0, 0))
+                if collage is None:
+                    collage = cropped
+                    collage_rois.append([
+                        roi, # coords in original frame
+                        [border, border, cropped.shape[1]-border, cropped.shape[0]-border], # coords in collage
+                        0 # id roi
                     ])
-                    img = transform(cropped_roi)
-                    img = img.unsqueeze(0)
-                    ts0 = time.time()
-
-                    if config.model is not None and '.pth' in config.model:
-                        with torch.no_grad():
-                            preds = classifier(img)
-                            preds = torch.max(torch.log_softmax(preds, dim=1), dim=1).float()
-                            scores = [1]
-                            class_ids = [int(c) for c in preds.indices.flatten()]
-                    else:
-                        preds = classifier(img)
-                        preds = torch.nn.functional.softmax(preds[0], dim=0)
-                        preds = preds.detach().numpy()
-                        top = get_top_torch(preds, topn=1)
-                        scores = [float(s) for s in top['scores']]
-                        class_ids = [int(c) for c in top['idxs']]
-                        
-                    ts1 = time.time()
-                    # print(f'inference took {ts1-ts0:.3} seconds')
-                    boxes = []
-                    # preds = get_top_torch(preds)
-                    # scores = [float(s)/100 for s in preds['scores']]
-                    # class_ids = [int(c) for c in preds['idxs']]
-                    # scores = [s for s in preds.values.flatten()]
-                    # import pdb; pdb.set_trace()
-                elif framework == 'tf':
-                    preds = run_detector(detector, cropped_roi, input_size=input_size) 
-                    boxes = preds['detection_boxes'][0]
-                    scores = preds['detection_scores'][0]
-                    class_ids = preds['detection_classes'][0]
-
-                    selected_indices = tf.image.non_max_suppression(boxes, scores, 10, iou_threshold=0.3)
-                    selected_boxes = np.array(tf.gather(boxes, selected_indices))
-                    # print(f'Removed {len(boxes) - len(selected_boxes)} boxes with NMS')
-                    boxes = selected_boxes
-                    scores = np.array(tf.gather(scores, selected_indices))
-                    class_ids = np.array(tf.gather(class_ids, selected_indices))
-
                 else:
-                    transform = transforms.Compose([
-                        transforms.ToPILImage(),
-                        transforms.Resize((input_size[0], input_size[1])),
-                        transforms.ToTensor()
-                    ])
-                    img = transform(cropped_roi)
-                    img = img.unsqueeze(0)
-                    # preds = detector(img)
-                    if config.model == 'yolov5':
-                        preds = object_detection_torch(detector, img)
-                        if len(preds.xyxy[0]) > 0:
-                            preds = preds.xyxy[0].detach().numpy()
-                            boxes = [[preds[0][0], preds[0][1], preds[0][2], preds[0][3]]]
-                            scores = [preds[0][4]]
-                            class_ids = [int(preds[0][5])]
-                        else:
-                            boxes = []
+                    h1, w1 = collage.shape[:2]
+                    h2, w2 = cropped.shape[:2]
 
+                    if collage.shape[0] > collage.shape[1]:
+                        #create empty matrix
+                        vis = np.zeros((max(h1, h2), w1+w2,3), np.uint8)
+
+                        #combine 2 images
+                        vis[:h1, :w1,:3] = collage
+                        vis[:h2, w1:w1+w2,:3] = cropped
+                        collage = vis
+
+                        collage_rois.append([
+                            roi, # coords in original frame
+                            [w1+border, border, w1+w2-border, h2-border], # coords in collage
+                            len(collage_rois) # id roi
+                        ])
                     else:
-                        preds = detector(img)[0]
-                        boxes = preds['boxes'].to('cpu').detach().numpy()
-                        scores = preds['scores'].to('cpu').detach().numpy()
-                        class_ids = preds['labels'].to('cpu').detach().numpy()
-            
-                infer_ts1 = time.time()
-                infer_ts += infer_ts1 - infer_ts0
-                                   
-                cv2.rectangle(frame, (roi[0], roi[1]), (roi[2], roi[3]), (0, 255, 0), 2)
-                cv2.putText(frame, 'ROI', (roi[0], roi[1]-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                        #create empty matrix
+                        vis = np.zeros((h1+h2, max(w1, w2),3), np.uint8)
 
-                cv2.putText(frame, str(areas[roi_id]), (roi[0], roi[3]-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+                        #combine 2 images
+                        vis[:h1, :w1,:3] = collage
+                        vis[h1:h1+h2, :w2,:3] = cropped
+                        collage = vis
 
-                if config.classify_only:
+                        collage_rois.append([
+                            roi, # coords in original frame
+                            [border, h1+border, w2-border, h1+h2-border], # coords in collage
+                            len(collage_rois) # id roi
+                        ])
+                 
+                    # if collage.shape[0] > collage.shape[1]:
+                    #     if collage.shape[0] > cropped.shape[0]:
+                    #         border[3] = collage.shape[0] - cropped.shape[0]
+                    #         cropped = cv2.copyMakeBorder(cropped, 0, border[3], 0, 0, cv2.BORDER_CONSTANT, (0, 0, 0))
+                    #     if collage.shape[1] > cropped.shape[1]:
+                    #         border[1] = collage.shape[1] - cropped.shape[1]
+                    #         cropped = cv2.copyMakeBorder(cropped, 0, 0, 0, border[1], cv2.BORDER_CONSTANT, (0, 0, 0))
+                    #         
+                    #     print('Hconcat:')
+                    #     print(f'\tcropped: {cropped.shape}')
+                    #     print(f'\tcollage: {collage.shape}')
+                    #     collage = cv2.hconcat([collage, cropped])
+                    # else:
+                    #     if collage.shape[0] > cropped.shape[0]:
+                    #         border[3] = collage.shape[0] - cropped.shape[0]
+                    #         cropped = cv2.copyMakeBorder(cropped, 0, border[3], 0, 0, cv2.BORDER_CONSTANT, (0, 0, 0))
+                    #     if collage.shape[1] > cropped.shape[1]:
+                    #         border[1] = collage.shape[1] - cropped.shape[1]
+                    #         cropped = cv2.copyMakeBorder(cropped, 0, 0, 0, border[1], cv2.BORDER_CONSTANT, (0, 0, 0))
+
+                    #     print('Vconcat:')
+                    #     print(f'\tcropped: {cropped.shape}')
+                    #     print(f'\tcollage: {collage.shape}')
+                    #     collage = cv2.vconcat([collage, cropped])
+
+            # frame = collage
+            infer_ts0 = time.time()
+            if config.no_infer or collage is None:
+                boxes = []
+                scores = []
+                class_ids = []
+
+            else:
+
+                preds = run_detector(detector, collage, input_size=input_size) 
+                boxes = preds['detection_boxes'][0]
+                scores = preds['detection_scores'][0]
+                class_ids = preds['detection_classes'][0]
+
+                # selected_indices = tf.image.non_max_suppression(boxes, scores, 10, iou_threshold=0.3)
+                # selected_boxes = np.array(tf.gather(boxes, selected_indices))
+                # # print(f'Removed {len(boxes) - len(selected_boxes)} boxes with NMS')
+                # boxes = selected_boxes
+                # scores = np.array(tf.gather(scores, selected_indices))
+                # class_ids = np.array(tf.gather(class_ids, selected_indices))
+
+        
+            infer_ts1 = time.time()
+            infer_ts += infer_ts1 - infer_ts0
+                               
+            # cv2.rectangle(frame, (roi[0], roi[1]), (roi[2], roi[3]), (0, 255, 0), 2)
+            # cv2.putText(frame, 'ROI', (roi[0], roi[1]-10),
+            #     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # cv2.putText(frame, str(areas[roi_id]), (roi[0], roi[3]-10),
+            #     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 3)
+
+            for i in range(min(len(boxes), max_boxes)):
+                class_id = int(class_ids[i])
+                class_name = label_map[class_id]['name']
+                if scores[i] >= min_score:
+                    ymin, xmin, ymax, xmax = tuple(boxes[i])
+                    # (left, right, top, bottom) = (roi[0] + xmin * cropped_roi.shape[1], roi[0] + xmax * cropped_roi.shape[1],
+                    #                               roi[1] + ymin * cropped_roi.shape[0], roi[1] + ymax * cropped_roi.shape[0])
+                    (left, right, top, bottom) = (xmin * collage.shape[1], xmax * collage.shape[1],
+                                                  ymin * collage.shape[0], ymax * collage.shape[0])
+
+                    label = label_map[class_id]['name']
+                    if not config.no_show:
+                        display_str = "{}: {}%".format(label, int(100 * scores[i]))
+                        cv2.rectangle(collage, (int(left), int(top)), (int(right), int(bottom)), (0, 0, 255), 2)
+                        cv2.putText(collage, display_str, (int(left), int(top)-10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+                    # 1. Identify in what RoI this detection falls
+                    candidate = None
                     # import pdb; pdb.set_trace()
-                    if scores[0] >= min_score:
-                        print(f'[{class_ids[0]}]{label_map[class_ids[0]]} ({scores[0]*100}%)')
-                        cv2.putText(frame, f'{label_map[class_ids[0]]} ({scores[0]*100}%)', (roi[0], roi[1]+10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
+                    for roi in collage_rois:
+                        coords = roi[1]
+                        if coords[0] > left:
+                            continue
+                        if coords[1] > top:
+                            continue
+                        if coords[2] < right:
+                            continue
+                        if coords[3] < bottom:
+                            continue
+                    
+                        candidate = roi
+                        print(f'Candidate is RoI {roi[2]}')
+                        break
 
-                for i in range(min(len(boxes), max_boxes)):
-                    # if boxes[i] not in boxes_nms:
-                    #     continue
-                    class_id = int(class_ids[i])
-                    class_name = label_map[class_id]['name']
-                    # if scores[i] >= 0.01:
-                    #     print(f'{class_name}: {scores[i]:.3f}')
-                    if scores[i] >= min_score:
-                        # print(f'score for class {label_map[str(int(class_ids[i]))]["name"]}: {scores[i]}')
-                        if framework == 'tf':
-                            ymin, xmin, ymax, xmax = tuple(boxes[i])
-                            (left, right, top, bottom) = (roi[0] + xmin * cropped_roi.shape[1], roi[0] + xmax * cropped_roi.shape[1],
-                                                          roi[1] + ymin * cropped_roi.shape[0], roi[1] + ymax * cropped_roi.shape[0])
-                        else:
-                            xmin, ymin, xmax, ymax = tuple(boxes[i])
-                            (left, right, top, bottom) = (roi[0] + xmin, roi[0] + xmax,
-                                                          roi[1] + ymin, roi[1] + ymax)
-                        
+                    # 2. Convert coordinates to original frame
+                    # Collage keeps original dimensions, so we can do a direct translation
+                    # from collage coordinates to original frame coorindates.
+                    if candidate is None:
+                        continue
+                        import pdb; pdb.set_trace()
+                    roi = candidate[0]
+                    new_coords = candidate[1]
+                    (left, right, top, bottom) = (roi[0] + (left - new_coords[0]),
+                                                  roi[2] + (right - new_coords[2]),
+                                                  roi[1] + (top - new_coords[1]),
+                                                  roi[3] + (bottom - new_coords[3]))
 
-                        label = label_map[class_id]['name']
-                        det = [frame_id, class_id, scores[i], int(left), int(top), int(right), int(bottom), roi_id, num_areas_to_detect]
-                        detections.append(det)
+                    det = [frame_id, class_id, scores[i], int(left), int(top), int(right), int(bottom)]
+                    detections.append(det)
 
-                        if not config.no_show:
-                            display_str = "{}: {}%".format(label, int(100 * scores[i]))
-                            cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (0, 0, 255), 2)
-                            cv2.putText(frame, display_str, (int(left), int(top)-10),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+                    if not config.no_show:
+                        display_str = "{}: {}%".format(label, int(100 * scores[i]))
+                        cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (0, 0, 255), 2)
+                        cv2.putText(frame, display_str, (int(left), int(top)-10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-                        if config.save_rois is not None:
-                            print(f'saving roi from class {class_name} with score {scores[i]:.2f} at frame {frame_id}')
-                            save_dir = f'{config.save_rois}' 
-                            if scores[i] >= min(0.99, min_score * 1.5):
-                                save_dir = f'{save_dir}/certain' 
-                            else:
-                                save_dir = f'{save_dir}/uncertain'
-                            save_dir = f'{save_dir}/{class_name}' 
-                            if not os.path.exists(save_dir):
-                                os.makedirs(f'{save_dir}')
-                            
-                            cropped_bbox = np.array(original_frame[int(top):int(bottom), int(left):int(right)])
-                            cv2.imwrite(f'{save_dir}/{rois_saved}.png', cropped_bbox)
-                            rois_saved += 1
-                            
-                        if frames_since_first_detection == -1:
-                            frames_since_first_detection = 0
+                    if frames_since_first_detection == -1:
+                        frames_since_first_detection = 0
 
         if not config.no_show:
-            frame = cv2.resize(frame, (1280, 768))
-            # hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) #convert it to hsv
-            # import pdb; pdb.set_trace()
-            # hsv[:,:,1] = 255 
-            # frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
-            # cv2.putText(frame, f'frame: {frame_id}', (10, 10),
-            #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-            cv2.rectangle(frame, (10, 2), (140,60), (255,255,255), -1)
-            cv2.putText(frame, str(cap.get(cv2.CAP_PROP_POS_FRAMES)), (15, 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
-            cv2.putText(frame, f'Bg: {bg_ts1-bg_ts0:.3f} sec.', (15, 30),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
-            cv2.putText(frame, f'Infer: {infer_ts:.3f} sec.', (15, 45),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
-            cv2.imshow('Detections', frame)
+            if collage is not None:
+                frame = cv2.resize(frame, (1280, 768))
+                # collage = cv2.resize(collage, (1280, 768))
 
-            threshold = motionDetector.current_threshold.copy()
-            threshold = cv2.resize(threshold, (800, 600))
-            cv2.imshow('Threshold', threshold)
+                cv2.rectangle(frame, (10, 2), (140,60), (255,255,255), -1)
+                cv2.putText(frame, str(cap.get(cv2.CAP_PROP_POS_FRAMES)), (15, 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+                cv2.putText(frame, f'Bg: {bg_ts1-bg_ts0:.3f} sec.', (15, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+                cv2.putText(frame, f'Infer: {infer_ts:.3f} sec.', (15, 45),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+                cv2.imshow('Detections', frame)
+                cv2.imshow('Collage', collage)
 
-            if config.debug:
-                delta = motionDetector.current_delta.copy()
-                delta = cv2.resize(delta, (800, 600))
-                cv2.imshow('Delta', delta)
+                threshold = motionDetector.current_threshold.copy()
+                threshold = cv2.resize(threshold, (800, 600))
+                cv2.imshow('Threshold', threshold)
 
-                gray = motionDetector.current_gray.copy()
-                gray = cv2.resize(gray, (800, 600))
-                cv2.imshow('Gray', gray)
+                if config.debug:
+                    delta = motionDetector.current_delta.copy()
+                    delta = cv2.resize(delta, (800, 600))
+                    cv2.imshow('Delta', delta)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                sys.exit()
+                    gray = motionDetector.current_gray.copy()
+                    gray = cv2.resize(gray, (800, 600))
+                    cv2.imshow('Gray', gray)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    sys.exit()
 
         ret, frame = cap.read()
         frame_id += 1
@@ -515,7 +548,7 @@ def main():
                 frames_since_first_detection >= config.stop_after_detection:
             break
 
-    columns = ['frame', 'class_id', 'score', 'xmin', 'ymin', 'xmax', 'ymax', 'num_roi', 'parallel_infers']
+    columns = ['frame', 'class_id', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
     detections = pd.DataFrame(detections, columns=columns)
     detections.to_pickle(f'{config.output}/{Path(config.video).stem}.pkl', 'bz2')
 
