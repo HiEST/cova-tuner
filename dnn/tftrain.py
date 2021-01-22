@@ -14,8 +14,8 @@ def load_saved_model(path_to_model):
 
 def set_gpu_config():
     gpus = tf.config.experimental.list_physical_devices('GPU')
-    tf.config.experimental.set_memory_growth(gpus[0], True)
-    tf.config.experimental.set_memory_growth(gpus[1], True)
+    for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
 
 
 def train_loop(pipeline_config,
