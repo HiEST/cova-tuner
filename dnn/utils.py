@@ -167,11 +167,14 @@ def annotate_video(filename,
                    images_dir,
                    data_dir,
                    valid_classes,
+                   background=None,
+                   crops_dir=None,
                    label_map=None,
                    reshape=None,
                    min_score=0.5,
                    max_boxes=10,
-                   img_format='jpg'):
+                   img_format='jpg',
+                   debug=False):
 
     if label_map is None:
         label_map = mscoco
@@ -179,7 +182,11 @@ def annotate_video(filename,
     cap = cv2.VideoCapture(filename)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     ret, frame = cap.read()
+    original_frame = frame.copy()
     width, height, _ = frame.shape
+
+    if background is not None:
+        bg = cv2.imread(background)
 
     if reshape is not None:
         new_height = reshape[0]
@@ -202,6 +209,11 @@ def annotate_video(filename,
     for frame_id in trange(total_frames, desc='Processing frames', file=sys.__stderr__):  #while ret:
         detections = gt_detections[gt_detections.frame == frame_id]
         if len(detections) > 0:
+            if background is not None:
+                bg_img = bg.copy()
+                if debug:
+                    bg_debug = bg.copy()
+            
             # Resize image before writing it to disk
             if reshape is not None:
                 frame = imutils.resize(frame, height=reshape[0], width=reshape[1]) 
@@ -219,6 +231,26 @@ def annotate_video(filename,
 
                     # Get bbox info + frame info and scale to new width
                     (xmin, xmax, ymin, ymax) = det[['xmin', 'xmax', 'ymin', 'ymax']].values 
+
+                    if background is not None: # we crop detections and paste them over the bg, before resizing
+                        xmin = int(xmin)
+                        ymin = int(ymin)
+                        xmax = int(xmax)
+                        ymax = int(ymax)
+                        try:
+                            bg_img[ymin:ymax, xmin:xmax] = original_frame[ymin:ymax, xmin:xmax].copy()
+                        except Exception as e:
+                            import pdb; pdb.set_trace()
+                            print(str(e))
+
+                        if debug:
+                            bg_debug[ymin:ymax, xmin:xmax] = original_frame[ymin:ymax, xmin:xmax].copy()
+                            cv2.rectangle(bg_debug, (xmin, ymin), (xmax, ymax), (255, 0, 0), 1)
+                            cv2.putText(bg_debug, class_name, (xmin, ymin-10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+
+               
+
                     xmin = int(xmin * reshape_width)
                     xmax = int(xmax * reshape_width)
                     ymin = int(ymin * reshape_height)
@@ -233,9 +265,22 @@ def annotate_video(filename,
             if boxes_saved > 0:
                 cv2.imwrite('{}/{}'.format(images_dir, filename), frame)
 
+                if background is not None:
+                    if reshape is not None:
+                        bg_img = imutils.resize(bg_img, height=reshape[0], width=reshape[1]) 
+                        if debug:
+                            bg_debug = imutils.resize(bg_debug, height=reshape[0], width=reshape[1]) 
+                    cv2.imwrite('{}/{}'.format(crops_dir, filename), bg_img)
+                        
+                    if debug:
+                        cv2.imwrite('{}/debug/{}'.format(crops_dir, filename), bg_debug)
+
+
+
         ret, frame = cap.read()
-        # frame_id += 1
-        if not ret:
+        if ret:
+            original_frame = frame.copy()
+        else:
             break
 
     columns = ['filename', 'width', 'height', 'class', 'xmin', 'ymin', 'xmax', 'ymax']
@@ -244,40 +289,60 @@ def annotate_video(filename,
     all_images = df.filename.unique()
     df.to_csv('{}/annotations.csv'.format(data_dir), index=None)
     return df
-    # if len(all_images) >= 10:
-    #     train_imgs, test_imgs = train_test_split(all_images, test_size=val_ratio)
-    # else:
-    #     return False, False
 
-    # train_dataset = df[df.filename.isin(train_imgs)]
-    # test_dataset = df[df.filename.isin(test_imgs)]
 
-    # # Create train/test subfolders
-    # os.makedirs('{}/train'.format(images_dir), exist_ok=True)
-    # os.makedirs('{}/test'.format(images_dir), exist_ok=True)
-    # for img in train_dataset.filename.unique():
-    #     try:
-    #         shutil.move('{}/{}'.format(images_dir, img),
-    #                     '{}/train/{}'.format(images_dir, img))
-    #     except:
-    #         print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
-    #         raise
+def detections_over_background(
+        annotations,
+        background,
+        imgs_dir,
+        output_dir,
+        valid_classes,
+        debug=True):
 
-    # for img in test_dataset.filename.unique():
-    #     try:
-    #         shutil.move('{}/{}'.format(images_dir, img),
-    #                     '{}/test/{}'.format(images_dir, img))
-    #     except:
-    #         print('ERROR moving {}/{} to {}/train/'.format(images_dir, img, images_dir))
-    #         raise
+    df = pd.read_csv(annotations)
+    df = df[df['class'].isin(valid_classes)]
 
-    # # Commented out because the right full relative path is set during .record creation
-    # # train_dataset['filename'] = train_dataset['filename'].apply(lambda x: '{}/train/{}'.format(images_dir, x))
-    # # test_dataset['filename'] = test_dataset['filename'].apply(lambda x: '{}/test/{}'.format(images_dir, x))
-    # train_dataset.to_csv('{}/train_label.csv'.format(data_dir), index=None)
-    # test_dataset.to_csv('{}/test_label.csv'.format(data_dir), index=None)
+    if len(df) == 0:
+        return
 
-    # return train_dataset, test_dataset
+    if not os.path.exists(background):
+        return
+    bg = cv2.imread(background)
+    bg = imutils.resize(bg,
+                        height=df.height.values[0],
+                        width=df.width.values[0])
+
+    assert len(df.height.unique()) == 1
+    assert len(df.width.unique()) == 1
+
+    if debug:
+        os.makedirs('{}/debug'.format(output_dir), exist_ok=True)
+
+    for fn in df.filename.unique():
+        img_path = '{}/{}'.format(imgs_dir, fn)
+        img = cv2.imread(img_path)
+
+        bg_img = bg.copy()
+        if debug:
+            bg_debug = bg.copy()
+        for i, det in df[df.filename == fn].iterrows():
+            xmin, ymin, xmax, ymax = det[['xmin', 'ymin', 'xmax', 'ymax']]
+            try:
+                bg_img[ymin:ymax, xmin:xmax] = img[ymin:ymax, xmin:xmax].copy()
+            except Exception as e:
+                import pdb; pdb.set_trace()
+                print(str(e))
+
+            if debug:
+                bg_debug[ymin:ymax, xmin:xmax] = img[ymin:ymax, xmin:xmax].copy()
+                cv2.rectangle(bg_debug, (xmin, ymin), (xmax, ymax), (255, 0, 0), 1)
+                cv2.putText(bg_debug, det['class'], (xmin, ymin-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 1)
+
+        cv2.imwrite('{}/{}'.format(output_dir, fn), bg_img)
+        
+        if debug:
+            cv2.imwrite('{}/debug/{}'.format(output_dir, fn), bg_debug)
 
 
 def generate_label_map(classes):
