@@ -53,7 +53,7 @@ def main():
                         # if boxes[i] not in boxes_nms:
                         #     continue
                         class_id = int(det['class_id'])
-                        class_name = label_map[str(class_id)]['name']
+                        class_name = label_map[class_id]['name']
                         print(f'score for class {class_name}: {score}')
                         (left, right, top, bottom) = det[['xmin', 'xmax', 'ymin', 'ymax']].values 
 
