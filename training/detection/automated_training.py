@@ -2,13 +2,14 @@
 # -*- coding: utf-8 -*-
 
 import argparse
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 import configparser
 from copy import deepcopy
 from glob import glob
 import multiprocessing as mp
 import os
 from pathlib import Path
+import psutil
 import shlex  # split str commandfor sp
 import shutil
 import subprocess as sp
@@ -20,7 +21,8 @@ from tqdm import tqdm, trange
 sys.path.append('../../')
 from dnn.utils import detect_video, annotate_video, load_pbtxt, \
                     generate_label_map, generate_detection_files, \
-                    configure_pipeline, read_pickle, to_pickle
+                    configure_pipeline, read_pickle, to_pickle, \
+                    detections_over_background
 from dnn.tfrecord import generate_tfrecord_from_csv
 from dnn.tftrain import train_loop, eval_continuously, \
                     export_trained_model, load_saved_model, \
@@ -126,36 +128,70 @@ def eval_detector(args):
 
 
 def annotate_videos_parallel(args):
+    # process_id = args['process_id']
+    # p = psutil.Process()
+    # os.system("taskset -p 0xffff %d" % os.getpid())
+    # p.cpu_affinity([process_id])
+    # print(f'process id: {process_id}')
+    # print(f'process affinity: {p.cpu_affinity()}')
+
     test_video = str(args['test_video'])
     test_video_id = args['test_video'].stem
+    print(f'annotating {test_video}')
     
     gt_dir = args['gt_dir']
     datasets_dir = args['datasets_dir']
     data_dir = '{}/{}/data'.format(datasets_dir, test_video_id)
     images_dir = '{}/{}/images'.format(datasets_dir, test_video_id)
-    if os.path.exists('{}/annotations.csv'.format(data_dir)):
-        print(f'{test_video_id} has been already annotated.')
-        return
-
-    os.makedirs(datasets_dir, exist_ok=True)
-    os.makedirs(data_dir, exist_ok=True)
-    os.makedirs(images_dir, exist_ok=True)
-
-    min_annotation_score = args['min_annotation_score']
     classes = args['classes']
 
-    annotate_video(
-                filename=str(test_video),
-                groundtruth='{}/{}.pkl'.format(gt_dir, test_video_id),
-                images_dir=images_dir,
-                data_dir=data_dir,
-                valid_classes=classes,
-                label_map=None,  # groundtruths are annotated with mscoco label_map
-                reshape=[320],
-                min_score=min_annotation_score,
-                max_boxes=10,
-                img_format='jpg'
-            )
+    crops_over_background = args['crops_over_background']
+    backgrounds_dir = args['backgrounds_dir']
+
+    if crops_over_background:
+        crop_imgs_dir = '{}/{}/crops'.format(datasets_dir, test_video_id) 
+        os.makedirs(crop_imgs_dir, exist_ok=True)
+        os.makedirs('{}/debug'.format(crop_imgs_dir), exist_ok=True)
+        background = '{}/{}.bmp'.format(backgrounds_dir, test_video_id)
+    else:
+        background = None
+        crop_imgs_dir = None
+
+    if not os.path.exists('{}/annotations.csv'.format(data_dir)):
+        os.makedirs(datasets_dir, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(images_dir, exist_ok=True)
+
+        min_annotation_score = args['min_annotation_score']
+
+        annotate_video(
+                    filename=str(test_video),
+                    groundtruth='{}/{}.pkl'.format(gt_dir, test_video_id),
+                    images_dir=images_dir,
+                    data_dir=data_dir,
+                    valid_classes=classes,
+                    label_map=None,  # groundtruths are annotated with mscoco label_map
+                    reshape=[320],
+                    min_score=min_annotation_score,
+                    max_boxes=10,
+                    img_format='jpg',
+                    background=background,
+                    crops_dir=crop_imgs_dir
+                )
+    else:
+        print(f'{test_video_id} has been already annotated.')
+
+    # if crops_over_background:
+    #     crop_imgs_dir = '{}/{}/crops'.format(datasets_dir, test_video_id) 
+    #     if not os.path.exists(crop_imgs_dir):
+    #         os.makedirs(crop_imgs_dir, exist_ok=True)
+
+    #         detections_over_background(
+    #                 annotations='{}/annotations.csv'.format(data_dir),
+    #                 background='{}/{}.bmp'.format(backgrounds_dir, test_video_id),
+    #                 imgs_dir=images_dir,
+    #                 output_dir=crop_imgs_dir,
+    #                 valid_classes=classes)
 
 
 def automated_training_loop(config):
@@ -185,6 +221,8 @@ def automated_training_loop(config):
     min_annotation_score = annotation.getfloat('min_annotation_score', 0.5)
     frame_skipping = annotation.getint('frame_skipping', 5)
     use_only_classes_on_dataset = annotation.getboolean('use_only_classes_on_dataset', True)
+    crops_over_background = annotation.getboolean('crops_over_background', False)
+    backgrounds_dir = annotation.get('backgrounds_dir', None)
 
     dataset_style = {}
     dataset_ratio = {}
@@ -234,6 +272,10 @@ def automated_training_loop(config):
         print('Template pipeline config file ({}) does not exist but is required.'.format(template_config))
         sys.exit(1)
 
+    if not os.path.exists(backgrounds_dir):
+        print('backgrounds_dir ({}) does not exist but is required.'.format(backgrounds_dir))
+        sys.exit(1)
+
     if not os.path.exists(datasets_dir):
         print('datasets_dir ({}) does not exist. Creating...'.format(datasets_dir))
         os.makedirs(datasets_dir)
@@ -274,16 +316,30 @@ def automated_training_loop(config):
     # PRE C: Generate detection files for all training and test videos using groundtruths
     # Before start to generate files, check that every train/test video has its own groundtruth
     gt_missing = []
+    bg_missing = []
     for test_video in all_videos_dataset:
         test_video_id = test_video.stem
         pickle_path = '{}/{}.pkl'.format(gt_dir, test_video_id)
         if not os.path.exists(pickle_path):
             gt_missing.append(pickle_path)
 
+    if crops_over_background:
+        for train_video in train_dataset:
+            train_video_id = train_video.stem
+            bg_img = '{}/{}.bmp'.format(backgrounds_dir, train_video_id)
+            if not os.path.exists(bg_img):
+                bg_missing.append(bg_img)
+
     if len(gt_missing) > 0:
         print('Some groundtruth files are missing:')
         for gt in gt_missing:
             print('\t{}'.format(gt))
+        sys.exit(1)
+
+    if len(bg_missing) > 0:
+        print('Some background images are missing:')
+        for bg in bg_missing:
+            print('\t{}'.format(bg))
         sys.exit(1)
 
     for i in trange(len(all_videos_dataset),
@@ -307,15 +363,21 @@ def automated_training_loop(config):
             threshold=min_test_score_gt
         )
 
+    
+    max_workers = 40
+    print(f'total videos: {len(all_videos_dataset)}')
     annotate_args = [{
         'test_video': test_video,
         'datasets_dir': datasets_dir,
         'gt_dir': gt_dir,
         'classes': classes,
-        'min_annotation_score': min_annotation_score
-    } for test_video in all_videos_dataset]
+        'min_annotation_score': min_annotation_score,
+        'crops_over_background': crops_over_background if test_video in train_dataset else False,
+        'backgrounds_dir': backgrounds_dir,
+        'process_id': i%max_workers
+    } for i, test_video in enumerate(all_videos_dataset)]
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
         results = list(tqdm(
             executor.map(annotate_videos_parallel, annotate_args),
             total=len(annotate_args),
@@ -391,6 +453,8 @@ def automated_training_loop(config):
         train_size = 0
         if not os.path.exists('{}/label_map.pbtxt'.format(train_model_dir)):
             for dataset in ['train', 'test']:
+        
+                imgs_subdir = 'images' if not crops_over_background or dataset == 'test' else 'crops'
                 # if dataset_style[dataset] in ['current', 'incremental']:
                 #     print(f'FIXME')
                 #     sys.exit(1)
@@ -423,6 +487,7 @@ def automated_training_loop(config):
                     dataset_tfrecord = generate_tfrecord_from_csv(
                         '{}/{}.record'.format(train_model_dir, dataset),
                         csv_files,
+                        imgs_subdir=imgs_subdir,
                         ratio=dataset_ratio[dataset],
                         valid_classes=valid_classes,
                         frame_skipping=frame_skipping
@@ -446,6 +511,7 @@ def automated_training_loop(config):
                     dataset_tfrecord = generate_tfrecord_from_csv(
                         '{}/{}.record'.format(train_model_dir, dataset),
                         csv_files,
+                        imgs_subdir=imgs_subdir,
                         ratio=ratio,
                         valid_classes=valid_classes,
                         frame_skipping=frame_skipping
