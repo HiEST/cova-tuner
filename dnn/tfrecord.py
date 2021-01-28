@@ -135,16 +135,17 @@ def frame_skip(filenames, fs):
 def generate_tfrecord_from_csv(
         output_path,
         csv_inputs,
+        imgs_subdir='images',
         ratio=1.0,
         valid_classes=None,
         frame_skipping=1,
         write_test=False,
-        force_max_representation=False): 
+        force_max_representation=True): 
     writer = tf.python_io.TFRecordWriter(output_path)
     all_annotations = None
     random.shuffle(csv_inputs)
     for csv in csv_inputs:
-        imgs_dir = '{}/images'.format('/'.join(csv.split('/')[:-2]))
+        imgs_dir = '{}/{}'.format('/'.join(csv.split('/')[:-2]), imgs_subdir)
         df = pd.read_csv(csv)
         if frame_skipping > 1:
             if valid_classes is None:
