@@ -222,7 +222,7 @@ def automated_training_loop(config):
     frame_skipping = annotation.getint('frame_skipping', 5)
     use_only_classes_on_dataset = annotation.getboolean('use_only_classes_on_dataset', True)
     crops_over_background = annotation.getboolean('crops_over_background', False)
-    backgrounds_dir = annotation.get('backgrounds_dir', None)
+    backgrounds_dir = annotation.get('backgrounds_dir', '')
 
     dataset_style = {}
     dataset_ratio = {}
@@ -272,7 +272,7 @@ def automated_training_loop(config):
         print('Template pipeline config file ({}) does not exist but is required.'.format(template_config))
         sys.exit(1)
 
-    if not os.path.exists(backgrounds_dir):
+    if not os.path.exists(backgrounds_dir) and crops_over_background:
         print('backgrounds_dir ({}) does not exist but is required.'.format(backgrounds_dir))
         sys.exit(1)
 
@@ -296,10 +296,19 @@ def automated_training_loop(config):
         # i. one whole day never used for training
         # ii. all videos used in previous checkpoints. Will be moved from train_dataset
         # iii. same video used for current training iteration
-    train_dataset = sorted([Path(v) for v in glob('{}/**/*.mkv'.format(train_dataset_path), recursive=True)])
+    train_dataset = sorted([
+        Path(v)
+        for v in glob('{}/**/*.m*'.format(train_dataset_path), recursive=True) 
+        if any([f in v for f in ['mkv', 'mp4']])])
     test_dataset = [
-        sorted([Path(v) for v in glob('{}/**/*.mkv'.format(test_dataset_path[0]), recursive=True)]),
-        sorted([Path(v) for v in glob('{}/**/*.mkv'.format(test_dataset_path[1]), recursive=True)])
+        sorted([
+            Path(v)
+            for v in glob('{}/**/*.m*'.format(test_dataset_path[0]), recursive=True)
+            if any([f in v for f in ['mkv', 'mp4']])]),
+        sorted([
+            Path(v)
+            for v in glob('{}/**/*.m*'.format(test_dataset_path[1]), recursive=True)
+            if any([f in v for f in ['mkv', 'mp4']])]),
     ]
     all_videos_dataset = train_dataset + test_dataset[0] + test_dataset[1]
     trained_videos = [v.stem for v in test_dataset[1]]  # All videos in test_dataset[1] have been already used to train
