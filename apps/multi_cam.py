@@ -21,6 +21,7 @@ from torchvision.models.detection.rpn import AnchorGenerator
 from torchvision.models.detection.faster_rcnn import FastRCNNPredictor
 import pandas as pd
  
+sys.path.append('../')
 # from api.client import offload_single_frame
 # from api.server import get_top_torch, infer_torch, get_top_tf
 # from training.binary import Net2

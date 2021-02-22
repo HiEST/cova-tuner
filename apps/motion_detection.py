@@ -300,6 +300,7 @@ def main():
     frame_id = 0
     frames_since_first_detection = -1
     detections = []
+    prev_valid_detections = []
     while ret:
         if config.frame_skip > 0 and frame_id % config.frame_skip != 0:
             frame_id += 1
@@ -313,14 +314,49 @@ def main():
         if frame_id < config.start_after:
             motion_boxes = []
  
+        # collage = np.zeros(frame.shape, np.uint8)
+        # collage_limits = {
+        #     'right': 0,
+        #     'bottom': 0,
+        # }
+        collage = None
         if len(motion_boxes):
             original_frame = frame.copy()
             num_areas_to_detect = len([area for area in areas if area >= 2*config.min_area])
             for roi_id, roi in enumerate(motion_boxes):
                 if areas[roi_id] < 2*config.min_area:
                     continue
+
+                # collage_roi = [
+                #     collage_limits['right'],                        # left
+                #     collage_limits['bottom'],                          # top
+                #     collage_limits['right'] + (roi[2] - roi[0]),    # right
+                #     collage_limits['bottom'] + (roi[3] - roi[1])       # bottom  
+                # ]
+
+                # print(f'collage roi:')
+                # print(f'\theight: {collage_roi[1]}:{collage_roi[3]}')
+                # print(f'\twidth: {collage_roi[0]}:{collage_roi[2]}')
+                # collage[collage_roi[1]:collage_roi[3], collage_roi[0]:collage_roi[2]] = np.array(original_frame[roi[1]:roi[3], roi[0]:roi[2]])
+                # collage_limits['right'] = collage_limits['right'] + (roi[2] - roi[0])
+                # if collage_limits['right'] >= frame.shape[1]:
+                #     collage_limits['bottom'] = collage_limits['bottom'] + (roi[3] - roi[1])
+                #     collage_limits['right'] = 0
+                if collage is None:
+                    collage = original_frame[roi[1]:roi[3], roi[0]:roi[2]]
+                else:
+                    cropped = original_frame[roi[1]:roi[3], roi[0]:roi[2]]
+                    if collage.shape[0] > collage.shape[1]:
+                        collage = cv2.hconcat([collage, cropped])
+                    else:
+                        collage = cv2.vconcat([collage, cropped])
+
+                print(type(collage))
+
+
                 roi = scale_roi(roi, config.scale_roi, frame.shape)
                 cropped_roi = np.array(original_frame[roi[1]:roi[3], roi[0]:roi[2]])
+
 
                 infer_ts0 = time.time()
                 if config.no_infer:
@@ -440,7 +476,6 @@ def main():
                             (left, right, top, bottom) = (roi[0] + xmin, roi[0] + xmax,
                                                           roi[1] + ymin, roi[1] + ymax)
                         
-
                         label = label_map[class_id]['name']
                         det = [frame_id, class_id, scores[i], int(left), int(top), int(right), int(bottom), roi_id, num_areas_to_detect]
                         detections.append(det)
@@ -470,38 +505,39 @@ def main():
                             frames_since_first_detection = 0
 
         if not config.no_show:
-            frame = cv2.resize(frame, (1280, 768))
+            if collage is not None:
+                frame = cv2.resize(collage, (1280, 768))
             # hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV) #convert it to hsv
             # import pdb; pdb.set_trace()
             # hsv[:,:,1] = 255 
             # frame = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
             # cv2.putText(frame, f'frame: {frame_id}', (10, 10),
             #             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
-            cv2.rectangle(frame, (10, 2), (140,60), (255,255,255), -1)
-            cv2.putText(frame, str(cap.get(cv2.CAP_PROP_POS_FRAMES)), (15, 15),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
-            cv2.putText(frame, f'Bg: {bg_ts1-bg_ts0:.3f} sec.', (15, 30),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
-            cv2.putText(frame, f'Infer: {infer_ts:.3f} sec.', (15, 45),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
-            cv2.imshow('Detections', frame)
+                cv2.rectangle(frame, (10, 2), (140,60), (255,255,255), -1)
+                cv2.putText(frame, str(cap.get(cv2.CAP_PROP_POS_FRAMES)), (15, 15),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+                cv2.putText(frame, f'Bg: {bg_ts1-bg_ts0:.3f} sec.', (15, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+                cv2.putText(frame, f'Infer: {infer_ts:.3f} sec.', (15, 45),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+                cv2.imshow('Detections', frame)
 
-            threshold = motionDetector.current_threshold.copy()
-            threshold = cv2.resize(threshold, (800, 600))
-            cv2.imshow('Threshold', threshold)
+                threshold = motionDetector.current_threshold.copy()
+                threshold = cv2.resize(threshold, (800, 600))
+                cv2.imshow('Threshold', threshold)
 
-            if config.debug:
-                delta = motionDetector.current_delta.copy()
-                delta = cv2.resize(delta, (800, 600))
-                cv2.imshow('Delta', delta)
+                if config.debug:
+                    delta = motionDetector.current_delta.copy()
+                    delta = cv2.resize(delta, (800, 600))
+                    cv2.imshow('Delta', delta)
 
-                gray = motionDetector.current_gray.copy()
-                gray = cv2.resize(gray, (800, 600))
-                cv2.imshow('Gray', gray)
+                    gray = motionDetector.current_gray.copy()
+                    gray = cv2.resize(gray, (800, 600))
+                    cv2.imshow('Gray', gray)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                sys.exit()
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    sys.exit()
 
         ret, frame = cap.read()
         frame_id += 1

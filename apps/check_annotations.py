@@ -11,6 +11,7 @@ import imutils
 import numpy as np
 import pandas as pd
 
+sys.path.append('../')
 from utils.datasets import MSCOCO as label_map
 
 COLORS = [
@@ -21,7 +22,7 @@ COLORS = [
 
 def main():
     args = argparse.ArgumentParser()
-    args.add_argument("-v", "--videos", nargs='+', default=None, help="path to the video file")
+    args.add_argument("-v", "--videos", required=True, nargs='+', default=None, help="path to the video file")
     args.add_argument("-o", "--output", default=None, help="path save new detections.")
     args.add_argument("-d", "--detections", default=None, help="ground truth")
     args.add_argument("-t", "--threshold", default=0.5, type=float, help="score threshold")
