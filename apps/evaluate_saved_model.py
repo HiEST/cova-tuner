@@ -53,9 +53,10 @@ def load_pbtxt(filename):
 def load_saved_model(model):
     detection_model = tf.saved_model.load(model)
 
-    def detect_fn(self, img):
-        input_tensor = tf.image.convert_image_dtype(img, tf.uint8)[tf.newaxis, ...]
-        result = self(input_tensor)
+    def detect_fn(self, batch):
+        # input_tensor = tf.image.convert_image_dtype(img, tf.uint8)[tf.newaxis, ...]
+        # input_tensor = tf.cast(batch, dtype=tf.float32)
+        result = self(batch)
         result = {key:value.numpy() for key,value in result.items()}
         return result
 
@@ -81,19 +82,20 @@ def load_checkpoint_model(checkpoint_dir, pipeline_config, ckpt_id=None):
 
     ckpt.restore(ckpt_to_load).expect_partial()
 
-    def detect_fn(self, img):
+    def detect_fn(self, batch):
         # print(img.shape)
-        # import pdb; pdb.set_trace()
         # img = imutils.resize(img, width=300, height=300)
-        img = tf.image.convert_image_dtype(img, tf.uint8)[tf.newaxis, ...]
-        input_tensor = tf.convert_to_tensor(img.numpy(), dtype=tf.float32)
+        # img = tf.image.convert_image_dtype(img, tf.uint8)[tf.newaxis, ...]
+        # input_tensor = tf.convert_to_tensor(img.numpy(), dtype=tf.float32)
+        input_tensor = tf.cast(batch, dtype=tf.float32)
         preprocessed_image, shapes = self.preprocess(input_tensor)
         prediction_dict = self.predict(preprocessed_image, shapes)
     
         result = self.postprocess(prediction_dict, shapes)
         result = {key:value.numpy() for key,value in result.items()}
         # +1 to detected classes as we start counting at 1
-        result['detection_classes'][0] += 1
+        for b in range(len(batch)):
+            result['detection_classes'][b] += 1
         return result
 
     detection_model.detect = partial(detect_fn, detection_model)
@@ -154,11 +156,11 @@ def transpose(image, img_shape, label, box):
 
 def inputs(tfrecord, batch_size=8, num_epochs=1):
     dataset = tf.data.TFRecordDataset(tfrecord)
-    dataset.repeat(num_epochs)
-    dataset.batch(batch_size)
+    # dataset.repeat(num_epochs)
 
     dataset = dataset.map(tf_parse)
     dataset = dataset.map(transpose)
+    dataset = dataset.batch(batch_size)
     # dataset = dataset.map(resize)
 
     return dataset#.__iter__()
@@ -208,6 +210,7 @@ def main():
     args.add_argument("-l", "--label-map", default=None, help="Label map for the model")
     args.add_argument("--min-score", type=float, default=0, help="minimum score for detections")
     
+    args.add_argument("--batch-size", type=int, default=1, help="batch size for inferences")
     args.add_argument("--show", action="store_true", default=False, help="show detections")
 
     config = args.parse_args()
@@ -225,20 +228,28 @@ def main():
     else:
         label_map = load_pbtxt(config.label_map)
 
-    # print(config.model)
-    print(label_map)
+    print(config.model)
+    # print(config.dataset)
+    # print(label_map)
 
-    cols = ['model', 'exp', 'eval_scene', 'eval_ds']
+    cols = ['model', 'exp', 'train_scene', 'eval_scene', 'eval_ds']
     all_results = pd.DataFrame([], columns=cols)
     if exist_ok:
         all_results = pd.read_csv(f'{output_dir}/results.csv')
 
     for model in config.model:
-        model_scene = [p for p in model.split('/') if 'scene' in p][0]
         model_nn = 'edge' if 'edge' in model else 'ref'
-        exp = [p for p in model.split('/') if any([prefix in p for prefix in [model_nn, 'frozen', 'augmented']])][0]
-        # exp = exp.replace(f'{model_nn}_', '').replace('n-fold-', '')
+        model_type = 'saved' if 'saved_model' in model else 'checkpoint'
+        if 'base_model' in model:
+            exp = 'base_model'
+            model_scene = 'None'
+        else:
+            exp = [p for p in model.split('/') if any([prefix in p for prefix in [model_nn, 'frozen', 'augmented']])][0]
+            model_scene = [p for p in model.split('/') if 'scene' in p][0]
+
         if len(all_results[all_results['exp'] == exp]) == len(config.dataset):
+            print(all_results[all_results['exp'] == exp])
+            print(config.dataset)
             print(f'{exp} already exists')
             continue
 
@@ -247,17 +258,22 @@ def main():
             continue
         model_dir = output_dir + '/' + model_nn + '/' + exp + '/' + model_scene
         for ds in config.dataset:
-            if len(all_results[(all_results['exp'] == exp) & (all_results['eval_scene'])]) > 0:
-                print(f'{exp} on eval {ds} already exists')
-                continue
-
-            if 'n-fold' in model:
+            eval_scene = None
+            if 'scene' in ds:
                 eval_scene = [p for p in ds.split('/') if 'scene' in p][0]
+            if 'n-fold' in model:
                 if eval_scene != model_scene:
                     continue
                 print(f'{model} eval on {eval_scene}')
-            else:
-                assert False # TODO
+            
+            if len(all_results[(all_results['exp'] == exp) & (all_results['eval_scene'] == eval_scene)]) > 0:
+                print(f'{exp} on eval {ds} already exists')
+                continue
+
+            eval_scene = '' if eval_scene is None else eval_scene
+
+            # else:
+            #     assert False # TODO
             
             eval_ds = [p for p in Path(ds).parts if 'dataset' in p][0]
             results_dir = model_dir + '/' + eval_ds + '/' + eval_scene
@@ -265,7 +281,7 @@ def main():
             results = evaluate(detector, label_map, ds, results_dir, 
                                min_score=config.min_score, show=config.show)
 
-            df = pd.DataFrame([[model_nn, exp, eval_scene, eval_ds]], columns=cols)
+            df = pd.DataFrame([[model_nn, exp, model_scene, eval_scene, eval_ds]], columns=cols)
             for k, v in results.items():
                 df[k] = v
             all_results = all_results.append(df, ignore_index=True)
@@ -274,7 +290,7 @@ def main():
         all_results.to_csv(f'{output_dir}/results.csv', sep=',', index=False)
 
 
-def evaluate(detector, label_map, dataset, output_dir, min_score=0, show=False):
+def evaluate(detector, label_map, dataset, output_dir, min_score=0, batch_size=1, show=False):
     pascalvoc = '../accuracy-metrics/pascalvoc.py'
 
     detections_dir = f'{output_dir}/detections'
@@ -289,84 +305,93 @@ def evaluate(detector, label_map, dataset, output_dir, min_score=0, show=False):
     gt_detections = []
 
     img_id = 0
-    for img, img_shape, gt_label, gt_box in inputs(dataset): 
-        img = img.numpy()
-        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        img_shape = img_shape.numpy()
-        gt_label = gt_label.numpy()
-        gt_box = gt_box.numpy()
-        
-        results = detector.detect(img) 
-        boxes = results['detection_boxes'][0]
-        scores = results['detection_scores'][0]
-        class_ids = results['detection_classes'][0]
+    for images, shapes, gt_labels, gt_boxes in inputs(dataset, batch_size): 
+        results = detector.detect(images) 
 
-        while True:
-            img = img_bgr.copy()
-            for i in range(len(boxes)):
-                if scores[i] >= min_score:
-                    ymin, xmin, ymax, xmax = tuple(boxes[i])
-                    (xmin, xmax, ymin, ymax) = (
-                            int(xmin * img.shape[1]), 
-                            int(xmax * img.shape[1]),
-                            int(ymin * img.shape[0]), 
-                            int(ymax * img.shape[0])
-                        )
-                    det = [img_id, int(class_ids[i]), scores[i],
-                       xmin, ymin, xmax, ymax]
-                    detections.append(det)
-                    
-                    if show:
-                        cv2.rectangle(img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (255, 0, 0), 1)
-                        cv2.putText(img, f'{class_ids[i]}: {scores[i]*100:.2f}%', (int(xmin), int(ymin)-10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+        images = images.numpy()
+        gt_labels = gt_labels.numpy()
+        gt_boxes = gt_boxes.numpy()
+        for batch_id in range(batch_size):
+            boxes = results['detection_boxes'][batch_id]
+            scores = results['detection_scores'][batch_id]
+            class_ids = results['detection_classes'][batch_id]
 
-            if generate_gt:
-                for box, label in zip(gt_box, gt_label):
-                    ymin, xmin, ymax, xmax = tuple(box)
-                    (xmin, xmax, ymin, ymax) = (
-                            int(xmin * img.shape[1]), 
-                            int(xmax * img.shape[1]),
-                            int(ymin * img.shape[0]), 
-                            int(ymax * img.shape[0])
-                        )
-
-                    gt_det = [img_id, label, 1,
-                            xmin, ymin, xmax, ymax]
-                    gt_detections.append(gt_det)
-
-                    if show:
-                        cv2.rectangle(img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 1)
-                        cv2.putText(img, str(label), (int(xmin), int(ymin)-10),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            img = images[batch_id]
+            gt_label = gt_labels[batch_id]
+            gt_box = gt_boxes[batch_id]
 
             if show:
-                cv2.imshow("Detections", img)
+                img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+            
+            while True:
+                if show:
+                    img = img_bgr.copy()
+                for i in range(len(boxes)):
+                    if scores[i] >= min_score:
+                        ymin, xmin, ymax, xmax = tuple(boxes[i])
+                        (xmin, xmax, ymin, ymax) = (
+                                int(xmin * img.shape[1]), 
+                                int(xmax * img.shape[1]),
+                                int(ymin * img.shape[0]), 
+                                int(ymax * img.shape[0])
+                            )
+                        det = [img_id, int(class_ids[i]), scores[i],
+                           xmin, ymin, xmax, ymax]
+                        detections.append(det)
+                        
+                        if show:
+                            cv2.rectangle(img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (255, 0, 0), 1)
+                            cv2.putText(img, f'{class_ids[i]}: {scores[i]*100:.2f}%', (int(xmin), int(ymin)-10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
 
-                key = cv2.waitKey(0) & 0xFF
-                if key == ord("q"):
-                    sys.exit()
-                    break
-                elif key == ord("a"):
-                    min_score = min(min_score+0.05, 1)
-                elif key == ord("s"):
-                    min_score = max(min_score-0.05, 0)
-                elif key == ord("c"):
-                    break
-            else:
-                break
+                if generate_gt:
+                    for box, label in zip(gt_box, gt_label):
+                        ymin, xmin, ymax, xmax = tuple(box)
+                        (xmin, xmax, ymin, ymax) = (
+                                int(xmin * img.shape[1]), 
+                                int(xmax * img.shape[1]),
+                                int(ymin * img.shape[0]), 
+                                int(ymax * img.shape[0])
+                            )
 
-        img_id += 1
+                        gt_det = [img_id, label, 1,
+                                xmin, ymin, xmax, ymax]
+                        gt_detections.append(gt_det)
+
+                        if show:
+                            cv2.rectangle(img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 1)
+                            cv2.putText(img, str(label), (int(xmin), int(ymin)-10),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+                if show:
+                    cv2.imshow("Detections", img)
+
+                    key = cv2.waitKey(0) & 0xFF
+                    if key == ord("q"):
+                        sys.exit()
+                        break
+                    elif key == ord("a"):
+                        min_score = min(min_score+0.05, 1)
+                    elif key == ord("s"):
+                        min_score = max(min_score-0.05, 0)
+                    elif key == ord("c"):
+                        break
+                else:
+                    break
+
+            img_id += 1
 
     # classes = [c['name'] for c in label_map.values()]
     columns = ['frame', 'class_id', 'score',
                 'xmin', 'ymin', 'xmax', 'ymax']
 
     detections = pd.DataFrame(detections, columns=columns)
-    detections.to_csv('/tmp/detections.csv', sep=',', index=False)
+    detections.to_csv(f'{output_dir}/detections.csv', sep=',', index=False)
     
     if generate_gt:
         gt_detections = pd.DataFrame(gt_detections, columns=columns)
+        gt_detections.to_csv(f'{output_dir}/groundtruths.csv', sep=',', index=False)
+
         ret = generate_detection_files(gt_detections, gt_dir, "detections", 
                 label_map=label_map, groundtruth=True) 
         assert ret
