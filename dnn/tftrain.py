@@ -37,7 +37,8 @@ def train_loop(pipeline_config,
             train_steps=num_train_steps,
             use_tpu=False,
             checkpoint_every_n=checkpoint_every_n,
-            record_summaries=record_summaries
+            record_summaries=record_summaries,
+            checkpoint_max_to_keep=int(num_train_steps/checkpoint_every_n)
         )
 
 

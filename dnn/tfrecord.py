@@ -60,14 +60,28 @@ def create_tf_example(group, path, id_map):
     classes_text = []
     classes = []
 
+    # original_width = 3840
+    # original_height = 2160
+    # width, height = image.size
+    # if hasattr(group, 'width'):
+    #     original_width, original_height = image.size
+    #     width = group.width
+    #     height = group.height
+    # else:
+    original_width, original_height = image.size
+
     for index, row in group.object.iterrows():
-        xmins.append(row['xmin'] / width)
-        xmaxs.append(row['xmax'] / width)
-        ymins.append(row['ymin'] / height)
-        ymaxs.append(row['ymax'] / height)
+        xmins.append((row['xmin'] / width)*(width/original_width))
+        xmaxs.append((row['xmax'] / width)*(width/original_width))
+        ymins.append((row['ymin'] / height)*(height/original_height))
+        ymaxs.append((row['ymax'] / height)*(height/original_height))
         classes_text.append(row['class'].encode('utf8'))
         classes.append(id_map[row['class']])
 
+    if max(xmins + xmaxs + ymins + ymaxs) > 1.1:
+        import pdb; pdb.set_trace()
+    if min(xmins + xmaxs + ymins + ymaxs) < 0.0:
+        import pdb; pdb.set_trace()
     assert max(xmins + xmaxs + ymins + ymaxs) <= 1.1
     assert min(xmins + xmaxs + ymins + ymaxs) >= 0.0
 

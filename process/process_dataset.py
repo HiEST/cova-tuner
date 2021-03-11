@@ -84,7 +84,10 @@ def get_top_tf(preds, topn=10):
 def infer_video(filename, model, device, framework):
     cap = cv2.VideoCapture(filename)
     ret, frame = cap.read()
-    frame_shape = frame.shape
+    if ret:
+        frame_shape = frame.shape
+    else:
+        frame_shape = (0, 0)
     frame_id = 0
 
     data = []
@@ -106,7 +109,7 @@ def infer_video(filename, model, device, framework):
 def process_video(filename, model, device='cpu', framework='torch', output=None):
     ts0 = time.time()
     data, frame_shape = infer_video(filename, model, device, framework)
-    if output is not None:
+    if output is not None and len(data) > 0:
         path = f'{output}/{Path(filename).stem}.pkl'
         columns = ['frame', 'class_id', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
 
@@ -202,6 +205,11 @@ def process_dataset(dataset, dataset_name,
                 videos.append(str(f))
                 processed_ts[date_hour] = f.stem
 
+    if per_video_results:
+        num_videos = len(videos)
+        videos = [v for v in videos if not os.path.isfile(f'{output}/{Path(v).stem}.pkl')]
+        print(f'Skipped {num_videos - len(videos)} videos because they were already processed')
+
     video_results_output = output if per_video_results else None
     query_args = [
         [video, model, framework, video_results_output]
@@ -214,6 +222,11 @@ def process_dataset(dataset, dataset_name,
     if len(query_args) < max_workers*2:
         max_workers = len(query_args)
 
+    # Check if there are previous *.tmp.csv.{id} files and start after latest id
+    tmp_files = [int(str(tmp.suffix).split('.')[1]) for tmp in Path(f'{output}').glob('*.tmp.csv.*')]
+    previous_tmp_files = 0
+    if len(tmp_files) > 0:
+        previous_tmp_files = max(tmp_files) + 1
 
     for chunk_idx, chunk in enumerate(chunks(query_args, max_workers*2)):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -238,8 +251,8 @@ def process_dataset(dataset, dataset_name,
 
                 detections = detections.append(df, ignore_index=True)
                 print(f'{len(detections)} detections.')
-                print(f'Writing results to {dataset_name}.tmp.csv.{chunk_idx}')
-                detections.to_csv(f'{output}/{dataset_name}.tmp.csv.{chunk_idx}',
+                print(f'Writing results to {dataset_name}.tmp.csv.{chunk_idx+previous_tmp_files}')
+                detections.to_csv(f'{output}/{dataset_name}.tmp.csv.{chunk_idx+previous_tmp_files}',
                                   sep=',',
                                   float_format='.2f',
                                   index=False)
@@ -345,7 +358,7 @@ def main():
         else:
             models['ref'] = init_detector(ref_model)
             models['ref'].input_size = (1024, 1024)
-            devices['ref'] = devices['edge']
+            devices['ref'] = 'cpu'
 
     process_dataset(dataset,
                     dataset_name=config.name,
