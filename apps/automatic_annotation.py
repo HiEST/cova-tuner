@@ -34,9 +34,9 @@ def main():
     # construct the argument parser and parse the arguments
     args = argparse.ArgumentParser()
 
-    args. add_argument("-d", "--dataset", default=None, help="Path to the dataset to evaluate.")
-    args. add_argument("-o", "--output", default=None, help="Path to the output dir.")
-    args. add_argument("--csv", default=None, help="Path to the output dir.")
+    args.add_argument("-d", "--dataset", default=None, help="Path to the dataset to evaluate.")
+    args.add_argument("-o", "--output", default=None, help="Path to the output dir.")
+    args.add_argument("--csv", default=None, help="Path to the output dir.")
 
     # Detection/Classification
     args.add_argument("-m", "--model", default=None, help="Model for image classification")
@@ -65,13 +65,21 @@ def main():
                 label_map, config.output, config.min_score)
 
 
-def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, min_score=0.5):
-    writer = tf.compat.v1.python_io.TFRecordWriter(f'{output_dir}/{Path(tfrecord).stem}.record')
+def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, min_score=0.5, skip_empty_imgs=True):
+    record_path = f'{output_dir}/{Path(tfrecord).stem}.record'
+    
     detections = pd.read_csv(csv_file)
     detections = detections[detections.score >= min_score]
+    detections.to_csv(f'{output_dir}/{Path(tfrecord).stem}_annotations.csv', sep=',', index=False)
+
+    if os.path.isfile(record_path):
+        return
+
+    writer = tf.compat.v1.python_io.TFRecordWriter(record_path)
 
     img_id = 0
     for img, img_shape, gt_label, gt_box in inputs(tfrecord): 
+        img = tf.squeeze(img)
         encoded_img = tf.image.encode_jpeg(img).numpy()
         frame_dets = detections[detections['frame'] == img_id]
         xmins = []
@@ -80,14 +88,18 @@ def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, min_score=0.5):
         ymaxs = []
         labels = []
         classes = []
-        for row in frame_dets.iterrows():
+        height, width, _ = img.shape 
+        for _, row in frame_dets.iterrows():
             xmins.append(row['xmin'])
             xmaxs.append(row['xmax'])
             ymins.append(row['ymin'])
             ymaxs.append(row['ymax'])
             label = label_map[row['class_id']]['name']
-            labels.append(label)
-            classes.append(row['class_id'])
+            labels.append(label.encode('utf-8'))
+            classes.append(int(row['class_id']))
+
+        if skip_empty_imgs and len(frame_dets) == 0:
+            continue
 
         tf_example = tf.train.Example(
                 features=tf.train.Features(
@@ -113,13 +125,15 @@ def annotate(detector, label_map, tfrecord, output_dir, min_score=0.5):
     img_id = 0
     detections = []
     for img, img_shape, gt_label, gt_box in inputs(tfrecord): 
+        results = detector.detect(img) 
+
+        img = tf.squeeze(img)
         encoded_img = tf.image.encode_jpeg(img).numpy()
         img = img.numpy()
         height, width, _ = img.shape 
         gt_label = gt_label.numpy()
         gt_box = gt_box.numpy()
         
-        results = detector.detect(img) 
         boxes = results['detection_boxes'][0]
         scores = results['detection_scores'][0]
         class_ids = results['detection_classes'][0]

@@ -16,10 +16,16 @@ from tqdm import tqdm
 
 # Tensorflow
 import tensorflow as tf
-import tensorflow_hub as hub
+gpus = tf.config.experimental.list_physical_devices('GPU')
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
 
-from object_detection.builders import model_builder
-from object_detection.utils import config_util
+try:
+    from object_detection.builders import model_builder
+    from object_detection.utils import config_util
+except Exception:
+    print('No module object_detection.')
+    pass
 
 import cv2
 import imutils
@@ -102,12 +108,12 @@ def load_checkpoint_model(checkpoint_dir, pipeline_config, ckpt_id=None):
     return detection_model
 
 
-def load_model(model):
+def load_model(model, ckpt_id=None):
     if 'saved_model' in model:
         return load_saved_model(model)
     # elif 'checkpoint' in model:
     else:
-        return load_checkpoint_model(model, f'{model}/pipeline.config', "ckpt-6")
+        return load_checkpoint_model(model, f'{model}/pipeline.config', ckpt_id)
     # else:
     #     print(f'Model type could not be detected for {model}')
     #     raise Exception
@@ -154,7 +160,7 @@ def transpose(image, img_shape, label, box):
     return image, img_shape, label, box
 
 
-def inputs(tfrecord, batch_size=8, num_epochs=1):
+def inputs(tfrecord, batch_size=1, num_epochs=1):
     dataset = tf.data.TFRecordDataset(tfrecord)
     # dataset.repeat(num_epochs)
 
@@ -207,6 +213,7 @@ def main():
 
     # Detection/Classification
     args.add_argument("-m", "--model", nargs='+', default=None, help="Model for image classification")
+    args.add_argument("--ckpt-id", default=None, help="Id of the ckpt to load")
     args.add_argument("-l", "--label-map", default=None, help="Label map for the model")
     args.add_argument("--min-score", type=float, default=0, help="minimum score for detections")
     
@@ -220,8 +227,7 @@ def main():
     if config.output is not None:
         output_dir = config.output
 
-    exist_ok = os.path.isfile(f'{output_dir}/results.csv')
-    os.makedirs(output_dir, exist_ok=exist_ok)
+    os.makedirs(output_dir, exist_ok=True)
 
     if config.label_map is None:
         label_map = MSCOCO
@@ -229,12 +235,11 @@ def main():
         label_map = load_pbtxt(config.label_map)
 
     print(config.model)
-    # print(config.dataset)
-    # print(label_map)
+    day_model = False
 
     cols = ['model', 'exp', 'train_scene', 'eval_scene', 'eval_ds']
     all_results = pd.DataFrame([], columns=cols)
-    if exist_ok:
+    if os.path.isfile(f'{output_dir}/results.csv'):
         all_results = pd.read_csv(f'{output_dir}/results.csv')
 
     for model in config.model:
@@ -243,30 +248,48 @@ def main():
         if 'base_model' in model:
             exp = 'base_model'
             model_scene = 'None'
+        elif any([p in model for p in ['day', 'night', 'morning']]):
+            day_model = True
+            exp = [p for p in model.split('/') if model_nn in p][0]
+            model_scene = exp.split('-')[1]
         else:
-            exp = [p for p in model.split('/') if any([prefix in p for prefix in [model_nn, 'frozen', 'augmented']])][0]
             model_scene = [p for p in model.split('/') if 'scene' in p][0]
+            exp = '-'.join([p for p in model.split('/') 
+                    if any([prefix in p 
+                        for prefix in [model_nn, model_scene, 'frozen', 'augmented']])])
 
-        if len(all_results[all_results['exp'] == exp]) == len(config.dataset):
+        if len(all_results[(all_results['exp'] == exp) & \
+                (all_results['train_scene'] == model_scene) & \
+                (all_results['model'] == model)]) == len(config.dataset):
             print(all_results[all_results['exp'] == exp])
             print(config.dataset)
             print(f'{exp} already exists')
             continue
 
-        detector = load_model(model)
+        detector = load_model(model, config.ckpt_id)
         if detector is None:
             continue
         model_dir = output_dir + '/' + model_nn + '/' + exp + '/' + model_scene
         for ds in config.dataset:
             eval_scene = None
-            if 'scene' in ds:
-                eval_scene = [p for p in ds.split('/') if 'scene' in p][0]
-            if 'n-fold' in model:
-                if eval_scene != model_scene:
-                    continue
-                print(f'{model} eval on {eval_scene}')
-            
-            if len(all_results[(all_results['exp'] == exp) & (all_results['eval_scene'] == eval_scene)]) > 0:
+            if day_model:
+                eval_scene, eval_ds = Path(ds).stem.split('_')
+            else:
+                if 'scene' in ds:
+                    eval_scene = [p for p in ds.split('/') if 'scene' in p][0]
+                
+                if model_scene != 'None':
+                    if eval_scene != model_scene:
+                        continue
+                    print(f'{model} eval on {eval_scene}')
+                
+                eval_ds = [p for p in Path(ds).parts if 'dataset' in p][0]
+
+            if len(all_results[(all_results['exp'] == exp) & \
+                    (all_results['model'] == model) & \
+                    (all_results['train_scene'] == model_scene) & \
+                    (all_results['eval_scene'] == eval_scene) & \
+                    (all_results['eval_ds'] == eval_ds)])  > 0:
                 print(f'{exp} on eval {ds} already exists')
                 continue
 
@@ -275,11 +298,11 @@ def main():
             # else:
             #     assert False # TODO
             
-            eval_ds = [p for p in Path(ds).parts if 'dataset' in p][0]
             results_dir = model_dir + '/' + eval_ds + '/' + eval_scene
-            print(results_dir)
-            results = evaluate(detector, label_map, ds, results_dir, 
-                               min_score=config.min_score, show=config.show)
+            dets, gt_dets = evaluate(detector, label_map, ds, results_dir, batch_size=config.batch_size, 
+                                     min_score=config.min_score, show=config.show)
+
+            results = compute_accuracy(dets, gt_dets, results_dir, label_map, min_score=config.min_score)
 
             df = pd.DataFrame([[model_nn, exp, model_scene, eval_scene, eval_ds]], columns=cols)
             for k, v in results.items():
@@ -291,15 +314,7 @@ def main():
 
 
 def evaluate(detector, label_map, dataset, output_dir, min_score=0, batch_size=1, show=False):
-    pascalvoc = '../accuracy-metrics/pascalvoc.py'
-
-    detections_dir = f'{output_dir}/detections'
-    gt_dir = '{}/groundtruths'.format(output_dir)
     generate_gt = True
-    os.makedirs(gt_dir, exist_ok=True)
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(detections_dir, exist_ok=True)
-    os.makedirs('{}/results'.format(output_dir), exist_ok=True)
 
     detections = []
     gt_detections = []
@@ -386,17 +401,28 @@ def evaluate(detector, label_map, dataset, output_dir, min_score=0, batch_size=1
                 'xmin', 'ymin', 'xmax', 'ymax']
 
     detections = pd.DataFrame(detections, columns=columns)
-    detections.to_csv(f'{output_dir}/detections.csv', sep=',', index=False)
+    # detections.to_csv(f'{output_dir}/detections.csv', sep=',', index=False)
     
-    if generate_gt:
-        gt_detections = pd.DataFrame(gt_detections, columns=columns)
-        gt_detections.to_csv(f'{output_dir}/groundtruths.csv', sep=',', index=False)
+    gt_detections = pd.DataFrame(gt_detections, columns=columns)
+    # gt_detections.to_csv(f'{output_dir}/groundtruths.csv', sep=',', index=False)
+    return detections, gt_detections
 
-        ret = generate_detection_files(gt_detections, gt_dir, "detections", 
-                label_map=label_map, groundtruth=True) 
-        assert ret
-        classes_in_gt = gt_detections['class_id'].unique()
-        classes = [c['name'] for c in label_map.values() if c['id'] in classes_in_gt]
+
+def compute_accuracy(detections, gt_detections, output_dir, label_map, min_score=0.5):
+    pascalvoc = '../accuracy-metrics/pascalvoc.py'
+
+    detections_dir = f'{output_dir}/detections'
+    gt_dir = '{}/groundtruths'.format(output_dir)
+    os.makedirs(gt_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(detections_dir, exist_ok=True)
+    os.makedirs('{}/results'.format(output_dir), exist_ok=False)
+
+    ret = generate_detection_files(gt_detections, gt_dir, "detections", 
+                                   label_map=label_map, groundtruth=True) 
+    assert ret
+    classes_in_gt = gt_detections['class_id'].unique()
+    classes = [c['name'] for c in label_map.values() if c['id'] in classes_in_gt]
 
     ret = generate_detection_files(detections, detections_dir, "detections", 
             label_map=label_map, groundtruth=False, threshold=min_score) 
@@ -430,6 +456,7 @@ def evaluate(detector, label_map, dataset, output_dir, min_score=0, batch_size=1
         json.dump(results, f)
         
     return results
+
 
 if __name__ == "__main__":
     main()
