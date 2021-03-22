@@ -18,8 +18,12 @@ from tqdm import tqdm
 import tensorflow as tf
 import tensorflow_hub as hub
 
-from object_detection.builders import model_builder
-from object_detection.utils import config_util, dataset_util
+try:
+    from object_detection.builders import model_builder
+    from object_detection.utils import config_util, dataset_util
+except Exception:
+    print('No module object_detection.')
+    pass
 
 import cv2
 import imutils
@@ -27,7 +31,7 @@ import imutils
 sys.path.append('../')
 # Auxiliary functions
 from utils.datasets import MSCOCO
-from apps.evaluate_saved_model import load_model, load_pbtxt, inputs
+from apps.evaluate_saved_model import load_model, load_pbtxt, inputs, evaluate
 
 
 def main():
@@ -42,11 +46,21 @@ def main():
     args.add_argument("-m", "--model", default=None, help="Model for image classification")
     args.add_argument("-l", "--label-map", default=None, help="Label map for the model")
     args.add_argument("--min-score", type=float, default=0, help="minimum score for detections")
+    args.add_argument("--sliding-window", action="store_true", default=False, help="Annotate using sliding window")
+    args.add_argument("--roi-size", nargs='+', default=None, help="Size of the ROI to crop images")
+
+    args.add_argument("--img-size", nargs='+', default=None, help="Size of the images in the output tfrecord")
     
     args.add_argument("--show", action="store_true", default=False, help="show detections")
 
     config = args.parse_args()
     min_score = config.min_score
+    input_csv = config.csv
+
+    img_size = None
+    if config.img_size is not None:
+        assert len(config.img_size) == 2
+        img_size = [int(config.img_size[0]), int(config.img_size[1])]
 
     if config.label_map is None:
         label_map = MSCOCO
@@ -56,24 +70,55 @@ def main():
     detector = None
     if config.model is not None:
         detector = load_model(config.model)
-    
-    if config.csv is None:
-        annotate(detector, label_map, config.dataset, config.output, config.min_score)
-    else:
+   
+    if config.sliding_window:
+        input_csv = f'{config.output}/detections.csv'
+        print(f'Writing detections to {input_csv}')
+        detections, _ = evaluate(
+                detector=detector, label_map=label_map,
+                dataset=config.dataset,
+                output_dir=config.output,
+                min_score=min_score,
+                debug=True,
+                show=config.show,
+                single_inference=False,
+                roi_size=config.roi_size)
+
+    if input_csv is not None:
         annotate_from_csv(
-                config.dataset, config.csv,
-                label_map, config.output, config.min_score)
+                tfrecord=config.dataset,
+                csv_file=input_csv,
+                label_map=label_map,
+                output_dir=config.output,
+                min_score=config.min_score,
+                img_size=img_size)
+    else:
+        if detector is None:
+            if min_score < 1:
+                print(f'[ERROR] Model not specified and confidence threshold below 1 (groundtruth)')
+                sys.exit()
+            elif img_size is None:
+                print(f'[ERROR] If model is not specified, specify img_size to resize.')
+                sys.exit()
+        
+        annotate(
+                detector=detector,
+                label_map=label_map,
+                tfrecord=config.dataset,
+                output_dir=config.output,
+                min_score=config.min_score,
+                img_size=img_size)
 
 
-def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, min_score=0.5, skip_empty_imgs=True):
+def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, img_size=None, min_score=0.5, skip_empty_imgs=True):
     record_path = f'{output_dir}/{Path(tfrecord).stem}.record'
     
     detections = pd.read_csv(csv_file)
     detections = detections[detections.score >= min_score]
     detections.to_csv(f'{output_dir}/{Path(tfrecord).stem}_annotations.csv', sep=',', index=False)
 
-    if os.path.isfile(record_path):
-        return
+    # if os.path.isfile(record_path):
+    #     return
 
     writer = tf.compat.v1.python_io.TFRecordWriter(record_path)
 
@@ -89,17 +134,38 @@ def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, min_score=0.5, 
         labels = []
         classes = []
         height, width, _ = img.shape 
+
         for _, row in frame_dets.iterrows():
-            xmins.append(row['xmin'])
-            xmaxs.append(row['xmax'])
-            ymins.append(row['ymin'])
-            ymaxs.append(row['ymax'])
+            ymins.append(row['ymin']/height)
+            xmins.append(row['xmin']/width)
+            ymaxs.append(row['ymax']/height)
+            xmaxs.append(row['xmax']/width)
             label = label_map[row['class_id']]['name']
             labels.append(label.encode('utf-8'))
             classes.append(int(row['class_id']))
 
+            if  any([coord < 0 or coord > 1 for coord in [ymins[-1], xmins[-1], ymaxs[-1], xmaxs[-1]]]):
+                print(f'ymin: {ymins[-1]} - {row["ymin"]} - {height}')
+                print(f'xmin: {xmins[-1]} - {row["xmin"]} - {width}')
+                print(f'ymax: {ymaxs[-1]} - {row["ymax"]} - {height}')
+                print(f'xmax: {xmaxs[-1]} - {row["xmax"]} - {width}')
+                assert False
+
         if skip_empty_imgs and len(frame_dets) == 0:
+            img_id += 1
             continue
+
+        if img_size is not None:
+            width, height = img_size
+            img_ = Image.open(BytesIO(encoded_img))
+            img_ = img_.resize(img_size)
+            encoded_img = BytesIO()
+            img_.save(encoded_img, 'JPEG')
+            # import pdb; pdb.set_trace()
+            encoded_img.seek(0)
+            encoded_img = encoded_img.read()
+            # with open(f'{output_dir}/img_{img_id}.jpg', 'wb') as f:
+            #     f.write(encoded_img)
 
         tf_example = tf.train.Example(
                 features=tf.train.Features(
@@ -120,23 +186,35 @@ def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, min_score=0.5, 
         img_id += 1
 
 
-def annotate(detector, label_map, tfrecord, output_dir, min_score=0.5):
+def annotate(detector, label_map, tfrecord, output_dir, min_score=0.5, img_size=None):
     writer = tf.compat.v1.python_io.TFRecordWriter(f'{output_dir}/{Path(tfrecord).stem}.record')
     img_id = 0
     detections = []
     for img, img_shape, gt_label, gt_box in inputs(tfrecord): 
-        results = detector.detect(img) 
+        if detector is not None:
+            results = detector.detect(img) 
+
+            boxes = results['detection_boxes'][0]
+            scores = results['detection_scores'][0]
+            class_ids = results['detection_classes'][0]
+        else:
+            boxes = gt_box.numpy()[0]
+            class_ids = gt_label.numpy()[0]
+            scores = [1 for _ in boxes]
 
         img = tf.squeeze(img)
         encoded_img = tf.image.encode_jpeg(img).numpy()
         img = img.numpy()
         height, width, _ = img.shape 
-        gt_label = gt_label.numpy()
-        gt_box = gt_box.numpy()
         
-        boxes = results['detection_boxes'][0]
-        scores = results['detection_scores'][0]
-        class_ids = results['detection_classes'][0]
+        if img_size is not None:
+            width, height = img_size
+            img_ = Image.open(BytesIO(encoded_img))
+            img_ = img_.resize(img_size)
+            encoded_img = BytesIO()
+            img_.save(encoded_img, 'JPEG')
+            encoded_img.seek(0)
+            encoded_img = encoded_img.read()
 
         xmins = []
         xmaxs = []
@@ -147,19 +225,23 @@ def annotate(detector, label_map, tfrecord, output_dir, min_score=0.5):
         for i in range(len(boxes)):
             if scores[i] >= min_score:
                 ymin, xmin, ymax, xmax = tuple(boxes[i])
-                (xmin, xmax, ymin, ymax) = (
-                        int(xmin * img.shape[1]), 
-                        int(xmax * img.shape[1]),
-                        int(ymin * img.shape[0]), 
-                        int(ymax * img.shape[0])
-                    )
+                # (xmin, xmax, ymin, ymax) = (
+                #         int(xmin * img.shape[1]), 
+                #         int(xmax * img.shape[1]),
+                #         int(ymin * img.shape[0]), 
+                #         int(ymax * img.shape[0])
+                #     )
                 det = [img_id, int(class_ids[i]), scores[i], 
                       xmin, ymin, xmax, ymax]
                 detections.append(det)
-                xmins.append(xmin/width)
-                xmaxs.append(xmax/width)
-                ymins.append(ymin/height)
-                ymaxs.append(ymax/height)
+                xmins.append(xmin)
+                xmaxs.append(xmax)
+                ymins.append(ymin)
+                ymaxs.append(ymax)
+                # xmins.append(xmin/width)
+                # xmaxs.append(xmax/width)
+                # ymins.append(ymin/height)
+                # ymaxs.append(ymax/height)
                 classes.append(int(class_ids[i]))
                 labels.append(label_map[int(class_ids[i])]['name'].encode('utf8'))
                 
