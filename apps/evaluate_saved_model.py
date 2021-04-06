@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 # Tensorflow
 import tensorflow as tf
+from tensorflow.python.summary.summary_iterator import summary_iterator
 gpus = tf.config.experimental.list_physical_devices('GPU')
 for gpu in gpus:
     tf.config.experimental.set_memory_growth(gpu, True)
@@ -35,6 +36,7 @@ import imutils
 sys.path.append('../')
 # Auxiliary functions
 from dnn.utils import generate_detection_files
+from dnn.tftrain import eager_eval_loop
 from utils.detector import run_detector
 from utils.datasets import MSCOCO
 
@@ -85,6 +87,7 @@ def load_checkpoint_model(checkpoint_dir, pipeline_config, ckpt_id=None):
         ckpt_to_load_ = [c for c in manager.checkpoints if ckpt_id in c]
         if len(ckpt_to_load_) == 1:
             ckpt_to_load = ckpt_to_load_[0]
+            print(f'Loaded checkpoint {ckpt_to_load}')
         else:
             return None
             print(f'{ckpt_id} not found in {manager.checkpoints}')
@@ -220,6 +223,7 @@ def main():
     args.add_argument("-l", "--label-map", default=None, help="Label map for the model")
     args.add_argument("--min-score", type=float, default=0, help="minimum score for detections")
     args.add_argument("--roi-size", nargs='+', default=None, help="Size of the ROI to crop images")
+    args.add_argument("--use-api", action="store_true", default=False, help="Evaluate using Object Detection API.")
     
     args.add_argument("--batch-size", type=int, default=1, help="batch size for inferences")
     args.add_argument("--show", action="store_true", default=False, help="show detections")
@@ -249,13 +253,13 @@ def main():
     print(config.dataset)
     day_model = False
 
-    cols = ['model', 'exp', 'train_scene', 'eval_scene', 'eval_ds']
+    cols = ['model', 'ckpt-id', 'exp', 'train_scene', 'eval_scene', 'eval_ds']
     all_results = pd.DataFrame([], columns=cols)
     if os.path.isfile(f'{output_dir}/results.csv'):
         all_results = pd.read_csv(f'{output_dir}/results.csv')
 
     for model in config.model:
-        model_nn = 'edge' if 'edge' in model else 'ref'
+        model_nn = [p for p in model.split('/') if any([prefix in p for prefix in ['edge', 'ref']])][0]
         model_type = 'saved' if 'saved_model' in model else 'checkpoint'
         if 'base_model' in model:
             exp = 'base_model'
@@ -269,18 +273,22 @@ def main():
             exp = '-'.join([p for p in model.split('/') 
                     if any([prefix in p 
                         for prefix in [model_nn, model_scene, 'frozen', 'augmented']])])
+            print(f'EXP: {exp}')
 
         if len(all_results[(all_results['exp'] == exp) & \
                 (all_results['train_scene'] == model_scene) & \
+                (all_results['ckpt-id'] == config.ckpt_id) & \
                 (all_results['model'] == model)]) == len(config.dataset):
             print(all_results[all_results['exp'] == exp])
             print(config.dataset)
             print(f'{exp} already exists')
             continue
 
-        detector = load_model(model, config.ckpt_id)
-        if detector is None:
-            continue
+        detector = None
+        if not config.use_api:
+            detector = load_model(model, config.ckpt_id)
+            if detector is None:
+                continue
         model_dir = output_dir + '/' + model_nn + '/' + exp + '/' + model_scene
         for ds in config.dataset:
             eval_scene = None
@@ -297,11 +305,14 @@ def main():
                 
                 eval_ds = [p for p in Path(ds).parts if 'dataset' in p][0]
 
-            if len(all_results[(all_results['exp'] == exp) & \
+            prev_results = all_results[(all_results['exp'] == exp) & \
                     (all_results['model'] == model) & \
                     (all_results['train_scene'] == model_scene) & \
                     (all_results['eval_scene'] == eval_scene) & \
-                    (all_results['eval_ds'] == eval_ds)])  > 0:
+                    (all_results['ckpt-id'] == config.ckpt_id) & \
+                    (all_results['eval_ds'] == eval_ds)]
+            if len(prev_results)  > 0:
+                print(prev_results)
                 print(f'{exp} on eval {ds} already exists')
                 continue
 
@@ -310,14 +321,67 @@ def main():
             # else:
             #     assert False # TODO
             
-            results_dir = model_dir + '/' + eval_ds + '/' + eval_scene
-            dets, gt_dets = evaluate(detector, label_map, ds, results_dir, batch_size=config.batch_size, 
-                                     min_score=config.min_score, show=config.show,
-                                     single_inference=(config.roi_size is None), roi_size=config.roi_size)
+            ckpt_id = config.ckpt_id
+            if ckpt_id is None:
+                ckpt_id = 'latest'
+            if not config.use_api:
+                results_dir = model_dir + '/' + ckpt_id + '/' + eval_ds + '/' + eval_scene
 
-            results = compute_accuracy(dets, gt_dets, results_dir, label_map, min_score=config.min_score)
+                if os.path.exists(f'{results_dir}/results'):
+                    import pdb; pdb.set_trace()
+                    print(f'Results dir {results_dir}/results exists but didn\'t get it :/')
+                    continue
+                dets, gt_dets = evaluate(detector, label_map, ds, results_dir, batch_size=config.batch_size, 
+                                         min_score=config.min_score, show=config.show,
+                                         single_inference=(config.roi_size is None), roi_size=config.roi_size)
 
-            df = pd.DataFrame([[model_nn, exp, model_scene, eval_scene, eval_ds]], columns=cols)
+                results = compute_accuracy(dets, gt_dets, results_dir, label_map, min_score=config.min_score)
+
+            else:
+                prev_results = all_results[(all_results['exp'] == exp) & \
+                        (all_results['eval_ds'] == eval_ds) & \
+                        (all_results['model'] == model)]
+                if len(prev_results) > 0:
+                    print(prev_results)
+                    continue
+                print(f'Evaluating {model}')
+                if config.ckpt_id is not None:
+                    if not os.path.exists(f'{model}/ckpt-{config.ckpt_id}.index'):
+                        print(f'{model}/ckpt-{config.ckpt_id} not found. Skipping')
+                        continue
+                events = []
+                if os.path.exists(f'{model}/eval'):
+                    events = [ev for ev in os.listdir(f'{model}/eval') if 'tfevents' in ev]
+                    for ev in events:
+                        print(f'removing {model}/eval/{ev}')
+                        os.remove(f'{model}/eval/{ev}')
+                    print(events)
+
+                if len(events) == 0 or True:
+                    print(f"\teager_eval_loop(\n"
+                            f"\t\tpipeline_config_path={model}/pipeline.config,\n"
+                            f"\t\teval_dataset={ds},\n"
+                            f"\t\tmodel_dir={model},\n"
+                            f"\t\tlabel_map={config.label_map},\n"
+                            f"\t\tckpt_id={config.ckpt_id})\n")
+
+                    eager_eval_loop(
+                            pipeline_config_path=f'{model}/pipeline.config',
+                            eval_dataset=ds,
+                            model_dir=model,
+                            label_map=config.label_map,
+                            ckpt_id=config.ckpt_id)
+                    events = [ev for ev in os.listdir(f'{model}/eval') if 'tfevents' in ev]
+
+                metrics = []
+                events = [ev for ev in summary_iterator(f'{model}/eval/{events[0]}')]
+                for ev in events:
+                    for v in ev.summary.value:
+                        if 'eval_side_by_side' not in v.tag and 'image' not in v.tag:
+                            metrics.append([v.tag, tf.make_ndarray(v.tensor).item()])
+                results = {m[0]: m[1] for m in metrics}
+
+            df = pd.DataFrame([[model_nn, config.ckpt_id, exp, model_scene, eval_scene, eval_ds]], columns=cols)
             for k, v in results.items():
                 df[k] = v
             all_results = all_results.append(df, ignore_index=True)
@@ -330,6 +394,10 @@ def evaluate(detector, label_map, dataset, output_dir, min_score=0, batch_size=1
     if debug:
         os.makedirs(f'{output_dir}/images', exist_ok=True)
     generate_gt = True
+
+    saved_model = False
+    if getattr(detector, 'detect', False):
+        saved_model = True
 
     detections = []
     gt_detections = []
@@ -394,16 +462,31 @@ def evaluate(detector, label_map, dataset, output_dir, min_score=0, batch_size=1
 
             part_images = np.stack([p for p in part_images], axis=0)
             ts0 = time.time()
-            input_tensor = tf.cast(part_images, dtype=tf.float32)
-            ts1 = time.time()
-            results = detector.detect(input_tensor)
-            ts2 = time.time()
-            # print(f'Done with inferences in {ts2-ts0:.3f}secs ({(ts2-ts1)/(num_columns*num_rows):.3f} per inf. and {ts1-ts0:.2f} for tf.cast)')
+            if not saved_model:
+                input_tensor = tf.cast(part_images, dtype=tf.float32)
+                ts1 = time.time()
+                results = detector.detect(input_tensor)
+                ts2 = time.time()
+                # print(f'Done with inferences in {ts2-ts0:.3f}secs ({(ts2-ts1)/(num_columns*num_rows):.3f} per inf. and {ts1-ts0:.2f} for tf.cast)')
 
-            for batch_id in range(len(results['detection_scores'])):
-                boxes.extend(results['detection_boxes'][batch_id])
-                scores.extend(results['detection_scores'][batch_id])
-                class_ids.extend(results['detection_classes'][batch_id])
+                for batch_id in range(len(results['detection_scores'])):
+                    boxes.extend(results['detection_boxes'][batch_id])
+                    scores.extend(results['detection_scores'][batch_id])
+                    class_ids.extend(results['detection_classes'][batch_id])
+
+            else:
+                for pimg in part_images:
+                    input_img = tf.image.convert_image_dtype(pimg, tf.uint8)[tf.newaxis, ...]
+                    ts1 = time.time()
+                    results = detector(input_img)
+                    ts2 = time.time()
+                    fps = 1/(ts2-ts1)
+                    print(f'fps: {fps:.2f}')
+                    results = {key:value.numpy() for key,value in results.items()}
+
+                    boxes.extend(results['detection_boxes'][batch_id])
+                    scores.extend(results['detection_scores'][batch_id])
+                    class_ids.extend(results['detection_classes'][batch_id])
 
             try:
                 selected_indices = tf.image.non_max_suppression(
