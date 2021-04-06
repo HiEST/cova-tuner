@@ -126,6 +126,9 @@ def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, img_size=None, 
     for img, img_shape, gt_label, gt_box in inputs(tfrecord): 
         img = tf.squeeze(img)
         encoded_img = tf.image.encode_jpeg(img).numpy()
+        
+        # img_ = Image.open(BytesIO(encoded_img))
+        # img_.save(f'{output_dir}/img_{img_id}-1.jpg')
         frame_dets = detections[detections['frame'] == img_id]
         xmins = []
         xmaxs = []
@@ -135,6 +138,7 @@ def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, img_size=None, 
         classes = []
         height, width, _ = img.shape 
 
+        # import pdb; pdb.set_trace()
         for _, row in frame_dets.iterrows():
             ymins.append(row['ymin']/height)
             xmins.append(row['xmin']/width)
@@ -167,6 +171,8 @@ def annotate_from_csv(tfrecord, csv_file, label_map, output_dir, img_size=None, 
             # with open(f'{output_dir}/img_{img_id}.jpg', 'wb') as f:
             #     f.write(encoded_img)
 
+        # img_ = Image.open(BytesIO(encoded_img))
+        # img_.save(f'{output_dir}/img_{img_id}-2.jpg')
         tf_example = tf.train.Example(
                 features=tf.train.Features(
                     feature={
