@@ -180,7 +180,8 @@ class Background:
         # if gathered enough frames, compute new average background
         if len(self.last_frames) >= self.take:
 
-            avg_last = np.mean(self.last_frames, axis=0)
+            # avg_last = np.mean(self.last_frames, axis=0)
+            avg_last = np.median(self.last_frames, axis=0)
             avg_last = avg_last.astype(np.uint8)
             self.last_frames = [avg_last.copy()]
             
@@ -191,7 +192,8 @@ class Background:
                 self.last_avgs = self.last_avgs[1:]
             
             # Compute average background from all averages
-            avg_background = np.mean(self.last_avgs, axis=0)
+            # avg_background = np.mean(self.last_avgs, axis=0)
+            avg_background = np.median(self.last_avgs, axis=0)
             avg_background = avg_background.astype(np.uint8)
 
             self.background_color = avg_background
