@@ -98,7 +98,10 @@ def capture_frames(video, frames_to_pick, imgs_dir, resize_height=None):
             ret, frame = cap.read()
             assert ret
             
-            img = cv2.resize(frame, (new_width, new_height))
+            if resize_ratio != 1:
+                img = cv2.resize(frame, (new_width, new_height))
+            else:
+                img = frame
             cv2.imwrite(f'{imgs_dir}/{Path(video).stem}_{frame_to_pick}.jpg', img)
     else:
         print(f'Frames for video {video} already captured')
@@ -271,8 +274,7 @@ def main():
     args.add_argument("-v", "--videos", default=None, help="path to the video file")
     args.add_argument("-d", "--detections", default=None, help="ground truth")
     args.add_argument("-f", "--frames-per-scene", default=0, type=int, help="play fps")
-    args.add_argument("-m", "--minutes-per-scene", default=0, type=float, help="play fps")
-    args.add_argument("-t", "--frames_to_train", default=None, type=float, help="play fps")
+    # args.add_argument("-m", "--minutes-per-scene", default=0, type=float, help="play fps")
     args.add_argument("--height", default=None, type=int, help="new height to resize frames to")
     args.add_argument("-o", "--output", default='dataset/', type=str, help="new height to resize frames to")
 
