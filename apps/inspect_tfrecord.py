@@ -49,8 +49,9 @@ def main():
     batch_size = 1
     nms = False
     iou_threshold = 0.5
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     for images, shapes, gt_labels, gt_boxes in inputs(config.dataset): 
+        print(f'img: {img_id}')
         images = images.numpy()
         gt_labels = gt_labels.numpy()
         gt_boxes = gt_boxes.numpy()
@@ -62,9 +63,26 @@ def main():
             gt_scores = [1 for _ in gt_label]
         
             if config.csv is not None:
+                height, width, _ = img.shape
                 det_frame = detections[detections.frame == img_id]
                 gt_label = [d['class_id'] for _,d in det_frame.iterrows()]
-                gt_box = [[d['ymin'], d['xmin'], d['ymax'], d['xmax']] for _,d in det_frame.iterrows()]
+                gt_box = [[
+                        d['ymin'],
+                        d['xmin'],
+                        d['ymax'],
+                        d['xmax']]
+                        for _,d in det_frame.iterrows()]
+
+                for box in gt_box:
+                    if any([c > 1 for c in box]):
+                        print(box)
+                if any([any([c > 1 for c in box]) for box in gt_box]):
+                    gt_box = [
+                        [box[0]/height,
+                         box[1]/width,
+                         box[2]/height,
+                         box[3]/width]
+                        for box in gt_box]
                 gt_scores = [d['score'] for _,d in det_frame.iterrows()]
 
             img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
@@ -88,12 +106,16 @@ def main():
 
                 for box, label, score in zip(boxes, labels, scores):
                     ymin, xmin, ymax, xmax = tuple(box)
-                    (xmin, xmax, ymin, ymax) = (
-                            int(xmin * img.shape[1]), 
-                            int(xmax * img.shape[1]),
-                            int(ymin * img.shape[0]), 
-                            int(ymax * img.shape[0])
-                        )
+                    if any([coord > 1 for coord in box]):
+                        assert False
+                        ymin, xmin, ymax, xmax = [int(coord) for coord in box]
+                    else:
+                        (xmin, xmax, ymin, ymax) = (
+                                int(xmin * img.shape[1]), 
+                                int(xmax * img.shape[1]),
+                                int(ymin * img.shape[0]), 
+                                int(ymax * img.shape[0])
+                            )
 
                     cv2.rectangle(img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (0, 255, 0), 1)
                     cv2.putText(img, f'{label_map[int(label)]["name"]}: {score:.2f}%', (int(xmin), int(ymin)-10),
