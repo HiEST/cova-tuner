@@ -82,6 +82,30 @@ python -m pip install -e .
 2. Clone repository for VOC metrics:
 ```git clone https://github.com/rafaelpadilla/Object-Detection-Metrics```
 
+## How it works
+The framework optimizes and automates every step of the pipeline to create an annotated training dataset to fine-tune neural network models using images from the same camera feed where the model is planned to be deployed.
+
+### Obtaining the background
+
+### Motion detection
+When working with static cameras, it is common for the scene to be mostly _static_ (sic.). From the one side, not always there are new objects entering the scene. If nothing new enters the scene, we can safely assume that there is nothing new to be detected. Therefore, inferences (either by the edge model while deployed or by the groundtruth model during annotation) are halted if no new objects are detected. On the other side, static cameras are usually placed meters away from the objects of interest with the intention of capturing a wide area. Therefore, objects appear small. This has two implications: first, objects of interest occupy a small part of the scene, which means that most of the frame will have little to no interest but still will be processed by the neural network hoping to find something (only increasing chances of False Positives). Second, smaller objects are more difficult to be correctly detected by neural networks. Furthermore, FullHD (1920x1080 pixels) or even 4K resolutions (3840x2160 pixels) are already common for edge cameras, while 300x300 is a common input resolution used by edge models. Therefore, image gets compressed 23 to 46 times before being passed to the neural network. With it, smaller objects are at risk of becoming just a few indistinguishable pixels.  
+
+Thanks to region proposal based on motion detection, we are able to focus the attention of the groundtruth model on those parts of the frame that really matter.
+
+Frame delta (difference with respect to background with a delta to consider only pixels with significant changes):
+![delta](https://user-images.githubusercontent.com/11491836/113740606-249d9280-9701-11eb-937a-185f0372edf0.gif)
+
+Threshold:
+![threshold](https://user-images.githubusercontent.com/11491836/113740580-1cddee00-9701-11eb-89b7-7c89d1bc6886.gif)
+
+Region proposal based on motion detection:
+![motion](https://user-images.githubusercontent.com/11491836/113740205-ca043680-9700-11eb-9e68-8261e980cc64.gif)
+
+
+Objects detected by an _off-the-shelf_ edge model, with RoIs from motion detection as input:
+![detections](https://user-images.githubusercontent.com/11491836/113740014-9de8b580-9700-11eb-87d4-cc4bd4d6703f.gif)
+
+
 
 ## Configuration
 Under `config/train_config.ini` you'll find an example of the config file with all the accepted options.
