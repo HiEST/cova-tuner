@@ -92,20 +92,77 @@ When working with static cameras, it is common for the scene to be mostly _stati
 
 Thanks to region proposal based on motion detection, we are able to focus the attention of the groundtruth model on those parts of the frame that really matter.
 
-Frame delta (difference with respect to background with a delta to consider only pixels with significant changes):
+<!---
+# Frame delta (difference with respect to background with a delta to consider only pixels with significant changes):
 ![delta](https://user-images.githubusercontent.com/11491836/113740606-249d9280-9701-11eb-937a-185f0372edf0.gif)
-
-Threshold:
 ![threshold](https://user-images.githubusercontent.com/11491836/113740580-1cddee00-9701-11eb-89b7-7c89d1bc6886.gif)
-
 Region proposal based on motion detection:
 ![motion](https://user-images.githubusercontent.com/11491836/113740205-ca043680-9700-11eb-9e68-8261e980cc64.gif)
-
-
 Objects detected by an _off-the-shelf_ edge model, with RoIs from motion detection as input:
 ![detections](https://user-images.githubusercontent.com/11491836/113740014-9de8b580-9700-11eb-87d4-cc4bd4d6703f.gif)
+![fulldets](https://user-images.githubusercontent.com/11491836/113850591-ec4a9280-979a-11eb-9e23-54c46a1a37ed.gif)
+ -->
+ 
+After we obtain a background for the scene, we can easily compute the difference between the background and the latest decoded frame to detect motion (left), previously converted to grayscale. Then, we translate the image to grayscale. Then, we compute the delta   
+<table>
+  <tr>
+    <td>
+      <img src="https://user-images.githubusercontent.com/11491836/113740606-249d9280-9701-11eb-937a-185f0372edf0.gif"  alt="Delta" width = 640px height = 360px>
+    </td>
+    <td> 
+      <img src="https://user-images.githubusercontent.com/11491836/113740580-1cddee00-9701-11eb-89b7-7c89d1bc6886.gif" alt="Threshold" width = 640px height = 360px>
+    </td>
+  </tr>
+</table>  
 
+As a result, we obtain the following regions of interest:
+<table>
+  <tr>
+    <td>
+      <img src="https://user-images.githubusercontent.com/11491836/113740606-249d9280-9701-11eb-937a-185f0372edf0.gif"  alt="Region proposal based on motion detection" width = 640px height = 360px>
+    </td>
+  </tr>
+</table>
+  
+Objects detected by an _off-the-shelf_ edge model. Left: the input of the neural network is the bounding box containing all detected moving objects. Right: traditional approach, i.e. full frame is passed as input to the neural network.
+<table>
+  <tr>
+    <td>
+      <img src="https://user-images.githubusercontent.com/11491836/113740014-9de8b580-9700-11eb-87d4-cc4bd4d6703f.gif"  alt="Detections based on motion" width = 640px height = 360px>
+    </td>
+    <td> 
+      <img src="https://user-images.githubusercontent.com/11491836/113850591-ec4a9280-979a-11eb-9e23-54c46a1a37ed.gif" alt="Traditional approach" width = 640px height = 360px>
+    </td>
+  </tr>
+</table>
 
+We can observe how using the regions proposed by the motion detection algorithm boosts accuracy of the model without any further training. 
+For example, on a closer look at the detections of the previous scene:
+<table>
+  <tr>
+    <th>Metric</th>
+    <th>Motion (left)</th>
+    <th>Full frame (right)</th>
+  </th>
+  <tr>
+    <td>Average confidence</td>
+    <td></td>
+    <td></td>  
+  </tr>
+  <tr>
+    <td>Top1 car detections (% of frames)</td>
+    <td style="text-align:center">89%</td>
+    <td style="text-align:center">16%</td>  
+  </tr>
+  <tr>
+    <td>Most Top1 detected class</td>
+    <td style="text-align:center">car (avg. score 76%)</td>
+    <td style="text-align:center">person (avg. score 46%)</td>  
+  </tr>
+</table>
+Moreover, we observe how a small square in the background is consitently and mistakenly detected as a car (avg. score 26%).
+
+These numbers highlight the incapacity of the edge model, with an input size of 300x300x3, to distinguish objects that represent only a small portion of the total frame. Thanks to the region proposal using motion detection, the edge model does not only boost its confidence on its detections but also dramatically reduce its error rate.    
 
 ## Configuration
 Under `config/train_config.ini` you'll find an example of the config file with all the accepted options.
