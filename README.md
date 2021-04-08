@@ -25,18 +25,17 @@
 ### Citation
 If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
 
-> Daniel Rivas-Barragan, Francesc Guim-Bernat, Josep Ll. Berral, Jordà Polo, and David Carrera (2021).
-Edge AutoTuner: Automated Fine-Tuning for Continuous Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
+> Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, Josep Ll. Berral, Pubudu M. Silva, and David Carrera (2021).
+Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
 
 
 ## Requirements:
 - Python >=3.6
-- Download edge model's checkpoint and reference model from Tensorflow Model Zoo:
-> In our experiments, we have used MobileNet V2 320x320 as the edge model and F-RCNN Inception Resnet152 1024x1024 as the reference model.
+- Download edge and reference model's checkpoint from Tensorflow Model Zoo. 
+There is no restriction in what models to use but in our experiments we have used the following:
+>  **Edge**: [MobileNet V2 320x320](http://download.tensorflow.org/models/object_detection/tf2/20200711/ssd_mobilenet_v2_320x320_coco17_tpu-8.tar.gz)
 
-```wget http://download.tensorflow.org/models/object_detection/tf2/20200711/ssd_mobilenet_v2_320x320_coco17_tpu-8.tar.gz```
-
-```wget http://download.tensorflow.org/models/object_detection/tf2/20200711/faster_rcnn_inception_resnet_v2_1024x1024_coco17_tpu-8.tar.gz```
+> **Reference**: [EfficientDet D2 768x768](http://download.tensorflow.org/models/object_detection/tf2/20200711/faster_rcnn_inception_resnet_v2_1024x1024_coco17_tpu-8.tar.gz)
 
 
 ## Installation
@@ -61,18 +60,18 @@ The latest stable code can be installed from [EdgeAutoTuner](https://pypi.python
 python -m pip install edge-autotuner
 ```
 
-The most recent code can be installed from the source on [GitHub](https://github.com/danirivas/edge_autotuner) with:
+The most recent code can be installed from the source on [GitHub](https://github.com/HiEST/edgeautotuner) with:
 
 ```python
 python -m pip install git+https://github.com/danirivas/edge_autotuner.git
 ```
 
-For developers, the repository can be cloned from [GitHub](https://github.com/HiEST/edge_autotuner) and installed in
+For developers, the repository can be cloned from [GitHub](https://github.com/HiEST/edgeautotuner) and installed in
 editable mode with:
 
 ```python
-git clone https://github.com/HiEST/edge_autotuner.git
-cd edge_autotuner
+git clone https://github.com/HiEST/edgeautotuner.git
+cd edgeautotuner
 python -m pip install -e .
 ```
 
@@ -119,7 +118,7 @@ As a result, we obtain the following regions of interest:
 <table>
   <tr>
     <td>
-      <img src="https://user-images.githubusercontent.com/11491836/113740606-249d9280-9701-11eb-937a-185f0372edf0.gif"  alt="Region proposal based on motion detection" width = 640px height = 360px>
+      <img src="https://user-images.githubusercontent.com/11491836/113740205-ca043680-9700-11eb-9e68-8261e980cc64.gif"  alt="Region proposal based on motion detection" width = 640px height = 360px>
     </td>
   </tr>
 </table>
