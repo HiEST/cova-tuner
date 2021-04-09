@@ -26,8 +26,8 @@
 </p>
 
 ## Description
-### How it works
-The framework optimizes and automates every step of the pipeline to create an annotated training dataset to fine-tune neural network models using images from the same camera feed where the model is planned to be deployed.
+Edge AutoTune provides a series of tools aimed at assisting with a rapid deployment of CNN models for video analytics in edge cloud locations. The framework automates every step of the pipeline, from the creation of the dataset using images from the edge cameras to the deployment of the _specialized_ model. Edge AutoTune focuses makes use of a series of techniques that work best when used on images from static cameras. 
+<!-- an annotated training dataset to fine-tune neural network models using images from the same camera feed where the model is planned to be deployed.-->
 
 ### Obtaining the background
 
@@ -159,7 +159,13 @@ There is no restriction in what models to use but in our experiments we have use
 > **Reference**: [EfficientDet D2 768x768](http://download.tensorflow.org/models/object_detection/tf2/20200711/faster_rcnn_inception_resnet_v2_1024x1024_coco17_tpu-8.tar.gz)
 
 
-## Configuration
+## Usage
+Edge AutoTune provides multiple tools that are accessible from the command-line interface.
+
+### Capture
+```edge_autotune capture --help```
+
+### Configuration
 Under `config/train_config.ini` you'll find an example of the config file with all the accepted options.
 
 Before you can start EAT, you'll have to set some paths in the config file. 
