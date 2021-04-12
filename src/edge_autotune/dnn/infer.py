@@ -3,7 +3,6 @@
 
 """Methods related to the execution of DNN Models"""
 
-from functools import partial
 import os
 from pathlib import Path
 
@@ -12,6 +11,8 @@ import pandas as pd
 import tensorflow as tf
 
 from edge_autotune.dnn.tools import load_model, load_pbtxt
+from edge_autotune.dnn.dataset import get_dataset_labels
+
 
 # gpus = tf.config.experimental.list_physical_devices('GPU')
 # for gpu in gpus:
@@ -36,11 +37,14 @@ class Model:
         self.iou_threshold = iou_threshold
         self.min_score = min_score
         self.label_map = None
+        
         if label_map:
             if os.path.isfile(label_map):
                 self.label_map = load_pbtxt(label_map)
             else:
                 raise Exception(f'label map file ({label_map}) not found.')
+        else:
+            self.label_map = get_dataset_labels('mscoco')
         
 
     def run(self, batch: list):
@@ -88,7 +92,7 @@ class Model:
             batch_results.append({
                 'boxes': boxes.tolist(),
                 'scores': scores.tolist(),
-                'class_ids': class_ids.tolist(),
+                'class_ids': [int(c) for c in class_ids.tolist()],
                 'labels': labels,
             })
 

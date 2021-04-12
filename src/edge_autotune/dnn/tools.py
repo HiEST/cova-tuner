@@ -3,6 +3,10 @@
 
 """This module implements diverse tools useful to work with DNN models and their whereabouts"""
 
+from functools import partial
+import os
+
+import tensorflow as tf
 
 def load_saved_model(model: str):
     """Load exported pb saved model.

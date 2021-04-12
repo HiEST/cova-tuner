@@ -17,7 +17,7 @@ import logging
 
 import click
 
-from edge_autotune.cli_helper import _server
+from edge_autotune.cli_helper import _server, _capture, _tune
 
 
 __all__ = ['main']
@@ -68,6 +68,12 @@ input_stream_option = click.option(
   type=click.Path(exists=True, dir_okay=False, file_okay=True),
 )
 
+input_valid_classes_option = click.option(
+  '--classes',
+  help='Comma-separated list of classes to detect.',
+  type=str,
+)
+
 input_server_url_option = click.option(
   '--server',
   help='Server\'s url',
@@ -96,7 +102,7 @@ output_dataset_option = click.option(
 )
 
 input_min_score_option = click.option(
-  '-p', '--port',
+  '--min-score',
   help='Minimum score to accept groundtruth model\'s predictions as valid.',
   default=0.5,
   type=float,
@@ -128,6 +134,7 @@ input_timeout_option = click.option(
 @input_stream_option
 @input_server_url_option
 @input_server_port_option
+@input_valid_classes_option
 @input_disable_motion_option
 @output_dataset_option
 @input_min_score_option
@@ -140,6 +147,7 @@ def capture(
   output: str,
   server: str,
   port: int = 6000,
+  classes: str = None,
   disable_motion: bool = False,
   min_score: float = 0.5,
   max_images: int = 1000,
@@ -148,6 +156,18 @@ def capture(
 ):
   """Capture and annotate images from stream and generate dataset."""
   print(f'capture: from {stream} to {output}. Connect to {server} (port={port}). Motion? {not disable_motion}')
+  _capture(
+    stream=stream,
+    output=output,
+    server=server,
+    port=port,
+    valid_classes=classes,
+    disable_motion=disable_motion,
+    min_score=min_score,
+    max_images=max_images,
+    min_images=min_images,
+    min_area=1000,
+  )
 
 
 input_checkpoint_option = click.option(
@@ -189,14 +209,24 @@ def tune(
   dataset: str,
   config: str,
   output: str,
+  train_steps: int = 1000,
 ):
-  """Start fine-tuning. 
+  """Start fine-tuning from base model's checkpoint.
 
   Args:
-      model (str): Path to dir containing saved_model or checkpoint from TensorFlow.
-      port (int): Port to listen to.
+    checkpoint (str): Path to directory containing the checkpoint to use as base model.
+    dataset (str): Path to the training dataset TFRecord file.
+    config (str): Path to the pipeline.config file with the training config.
+    output (str): Path to the output directory.
+    train_steps (int, optional): Number of training steps. Defaults to 1000.
   """
-  print('app')
+  _tune(
+    checkpoint=checkpoint,
+    dataset=dataset,
+    config=config,
+    output=output,
+    train_steps=train_steps,
+  )
 
 
 @input_checkpoint_option

@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+"""This module implements EdgeClient class"""
+
 import base64
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
@@ -31,7 +33,7 @@ class EdgeClient:
     annotation of images to obtain grountruths, and query the server
     to get and post multiple parameters.  
     
-    Attributes
+    Attributes:
         pending: List of images pending to be annotated.
         processed: List containing pairs of already processed images and their annotations.
         num_reqs: Number of requests accepted. Used to give requests individual id's.

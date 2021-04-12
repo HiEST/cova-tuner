@@ -5,21 +5,30 @@ from __future__ import division
 from __future__ import print_function
 from __future__ import absolute_import
 
+from collections import namedtuple
 import io
 import os
+from pathlib import Path
+import json
 
+import cv2
 import numpy as np
 import pandas as pd
+from PIL import Image
 import tensorflow.compat.v1 as tf
 
-from PIL import Image
 from object_detection.utils import dataset_util
-from collections import namedtuple
 
 from edge_autotune.dnn.tools import label_to_id_map
 
+# __all__ = [
+#     add_example_to_record,
+#     get_dataset_labels
+# ]
+
+
 def _split_by_filename(
-    df: DataFrame):
+    df: pd.DataFrame):
     """Split detections in DataFrame by filename.
 
     Args:
@@ -135,3 +144,57 @@ def generate_joint_tfrecord(
     writer.close()
     output_path = os.path.join(os.getcwd(), output_path)
     print('Successfully created the TFRecords: {}'.format(output_path))
+
+
+def add_example_to_record(writer, image, data, to_rgb=True, encoding='jpeg'):
+    
+    data = np.array(data)
+    classes = [int(c) for c in data[:,0]]
+    labels = [l.encode('utf-8') for l in data[:,1]]
+    xmins = [float(x) for x in data[:,2]]
+    xmaxs = [float(x) for x in data[:,3]]
+    ymins = [float(y) for y in data[:,4]]
+    ymaxs = [float(y) for y in data[:,5]]
+    
+    height, width, _ = image.shape
+    encoded_img = io.BytesIO()
+    if to_rgb:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    img_pil = Image.fromarray(image)
+    img_pil.save(encoded_img, encoding.upper())
+    encoded_img.seek(0)
+    encoded_img = encoded_img.read()
+            
+    try:
+        tf_example = tf.train.Example(
+                features=tf.train.Features(
+                    feature={
+                        'image/height': dataset_util.int64_feature(height),
+                        'image/width': dataset_util.int64_feature(width),
+                        'image/encoded': dataset_util.bytes_feature(encoded_img),
+                        'image/format': dataset_util.bytes_feature(encoding.lower().encode('utf-8')),
+                        'image/object/bbox/xmin': dataset_util.float_list_feature(xmins),
+                        'image/object/bbox/xmax': dataset_util.float_list_feature(xmaxs),
+                        'image/object/bbox/ymin': dataset_util.float_list_feature(ymins),
+                        'image/object/bbox/ymax': dataset_util.float_list_feature(ymaxs),
+                        'image/object/class/text': dataset_util.bytes_list_feature(labels),
+                        'image/object/class/label': dataset_util.int64_list_feature(classes),
+                }))
+
+        writer.write(tf_example.SerializeToString())
+    except Exception:
+        return False
+    return True
+
+
+def get_dataset_labels(dataset: str):
+    json_file = f'{Path(__file__).parent}/labels/{dataset.lower()}.json'
+    if os.path.isfile(json_file):
+        labels = {}
+        with open(json_file) as f:
+            labels_str = json.load(f)
+            for k in labels_str.keys():
+                labels[int(k)] = labels_str[k]
+            return labels
+
+    return None
