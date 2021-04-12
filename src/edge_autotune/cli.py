@@ -18,7 +18,8 @@ from typing import Tuple
 
 import click
 
-from edge_autotune.cli_helper import _server, _capture, _tune, _deploy
+if not '--help' in click.get_os_args():
+  from edge_autotune.cli_helper import _server, _capture, _tune, _deploy
 
 
 __all__ = ['main']
