@@ -2,6 +2,7 @@
 
 import logging
 from typing import Tuple
+import os
 
 import cv2
 import numpy as np
@@ -156,6 +157,7 @@ def _tune(
     dataset: str,
     config: str,
     output: str,
+    label_map: str,
     train_steps: int = 1000):
     """Start fine-tuning from base model's checkpoint.
 
@@ -166,9 +168,16 @@ def _tune(
         output (str): Path to the output directory.
         train_steps (int, optional): Number of training steps. Defaults to 1000.
     """
-    train.train_loop(
+    if not os.path.isfile(f'{checkpoint}.index'):
+        raise Exception("Checkpoint not found.")
+
+    train_datasets = dataset.split(',')
+    train.train_loop_wrapper(
         pipeline_config=config,
+        train_datasets=train_datasets,
         model_dir=output,
+        base_model=checkpoint,
+        label_map=label_map,
         num_train_steps=train_steps
     )
 

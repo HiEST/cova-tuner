@@ -145,3 +145,18 @@ def load_pbtxt(filename):
             }
 
     return label_map
+
+
+def save_pbtxt(classes, output_dir):
+    label_map_entries = [
+        'item {\n'
+            f'\tname: "{c}",\n'
+            f'\tid: {i+1}\n'
+        '}'#.format(c, i)
+        for i, c in enumerate(classes)
+    ]
+
+    label_map = '\n'.join(label_map_entries)
+
+    with open('{}/label_map.pbtxt'.format(output_dir), 'w') as f:
+        f.write(label_map)

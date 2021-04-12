@@ -174,7 +174,7 @@ input_checkpoint_option = click.option(
   '-c', '--checkpoint',
   help='Path to the checkpoint directory',
   required=True,
-  type=click.Path(exists=True, dir_okay=True, file_okay=False),
+  type=str,
 )
 
 input_dataset_option = click.option(
@@ -198,17 +198,33 @@ output_dir_option = click.option(
   type=click.Path(exists=False, dir_okay=True, file_okay=False),
 )
 
+input_train_steps_option = click.option(
+  '--train-steps',
+  help='Number of train steps',
+  type=int,
+)
+
+input_label_map_option = click.option(
+  '-l', '--label-map',
+  help='Path to the training dataset (tfrecord)',
+  required=True,
+  type=click.Path(exists=True, dir_okay=False, file_okay=True),
+)
+
 
 @input_checkpoint_option
 @input_dataset_option
 @input_config_option
 @output_dir_option
+@input_label_map_option
+@input_train_steps_option
 @main.command()
 def tune(
   checkpoint: str,
   dataset: str,
   config: str,
   output: str,
+  label_map: str,
   train_steps: int = 1000,
 ):
   """Start fine-tuning from base model's checkpoint.
@@ -218,6 +234,7 @@ def tune(
     dataset (str): Path to the training dataset TFRecord file.
     config (str): Path to the pipeline.config file with the training config.
     output (str): Path to the output directory.
+    label_map (str): Path to the pbtxt label_map file.
     train_steps (int, optional): Number of training steps. Defaults to 1000.
   """
   _tune(
@@ -225,6 +242,7 @@ def tune(
     dataset=dataset,
     config=config,
     output=output,
+    label_map=label_map,
     train_steps=train_steps,
   )
 
