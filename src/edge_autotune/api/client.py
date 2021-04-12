@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import time
 
 import cv2
@@ -18,12 +19,18 @@ import numpy as np
 import pandas as pd
 import requests
 
-
-Request = namedtuple(
-    'Request', 
-    ['img', 'id', 'results', 'ts_in', 'ts_out'],
-    defaults=[-1, time.time(), []]
-)
+if (sys.version_info.major == 3 and sys.version_info.minor >= 7):
+    Request = namedtuple(
+        'Request', 
+        ['img', 'id', 'results', 'ts_in', 'ts_out'],
+        defaults=[-1, time.time(), []]
+    )
+else:
+    Request = namedtuple(
+        'Request', 
+        ['img', 'id', 'results', 'ts_in', 'ts_out'],
+    )
+    Request.__new__.__defaults__ = (-1, time.time(), [])
 
 
 class EdgeClient:
