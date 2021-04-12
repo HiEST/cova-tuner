@@ -14,10 +14,11 @@ later, but that will cause problems--the code will get executed twice:
 """
 
 import logging
+from typing import Tuple
 
 import click
 
-from edge_autotune.cli_helper import _server, _capture, _tune
+from edge_autotune.cli_helper import _server, _capture, _tune, _deploy
 
 
 __all__ = ['main']
@@ -94,6 +95,13 @@ input_disable_motion_option = click.option(
   is_flag=True,
 )
 
+input_debug_option = click.option(
+  '--debug',
+  help='Activate debug',
+  default=False,
+  is_flag=True,
+)
+
 output_dataset_option = click.option(
   '-o', '--output',
   help='Path to the output dataset file',
@@ -106,6 +114,13 @@ input_min_score_option = click.option(
   help='Minimum score to accept groundtruth model\'s predictions as valid.',
   default=0.5,
   type=float,
+)
+
+input_min_area_option = click.option(
+  '--min-area',
+  help='Minimum area to consider a region as in containing motion.',
+  default=1000,
+  type=int,
 )
 
 input_max_images_option = click.option(
@@ -138,6 +153,7 @@ input_timeout_option = click.option(
 @input_disable_motion_option
 @output_dataset_option
 @input_min_score_option
+@input_min_area_option
 @input_max_images_option
 @input_min_images_option
 @input_timeout_option
@@ -150,6 +166,7 @@ def capture(
   classes: str = None,
   disable_motion: bool = False,
   min_score: float = 0.5,
+  min_area: int = 1000,
   max_images: int = 1000,
   min_images: int = 100,
   timeout: int = 0,
@@ -166,7 +183,7 @@ def capture(
     min_score=min_score,
     max_images=max_images,
     min_images=min_images,
-    min_area=1000,
+    min_area=min_area,
   )
 
 
@@ -260,17 +277,64 @@ def autotune(
   print('autotune')
 
 
-@input_checkpoint_option
-@input_dataset_option
-@output_dir_option
+input_window_size_option = click.option(
+  '--window-size',
+  help='Size of the output window to show the stream',
+  type=(int,int),
+  default=(1280,720),
+)
+
+input_label_map_deploy_option = click.option(
+  '-l', '--label-map',
+  help='Path to the training dataset (tfrecord)',
+  type=str,
+  default=None,
+)
+
+input_save_to_option = click.option(
+  '--save-to',
+  help='Path to save video with detection results',
+  type=str,
+  default=None,
+)
+
+@input_stream_option
+@input_model_option
+@input_label_map_deploy_option
+@input_valid_classes_option
+@input_min_score_option
+@input_disable_motion_option
+@input_min_area_option
+@input_window_size_option
+@input_save_to_option
+@input_debug_option
 @main.command()
 def deploy(
   stream: str,
-  dataset: str,
-  port: int,
+  model: str,
+  label_map: str = None,
+  classes: str = None,
+  min_score: float = 0.5,
+  disable_motion: bool = False,
+  min_area: int = 1000,
+  window_size: Tuple[int,int] = [1280,720],
+  save_to: str = None,
+  debug: bool = False,
 ):
   """Start client for inference using the tuned model."""
-  print('app')
+  _deploy(
+    stream=stream,
+    model=model,
+    label_map=label_map,
+    valid_classes=classes,
+    min_score=min_score,
+    disable_motion=disable_motion,
+    min_area=min_area,
+    first_frame_background=True,
+    window_size=window_size,
+    save_to=save_to,
+    debug=debug,
+  )
 
 if __name__ == '__main__':
     main()

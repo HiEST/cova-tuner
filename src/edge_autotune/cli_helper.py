@@ -3,6 +3,8 @@
 import logging
 from typing import Tuple
 import os
+import sys
+import time
 
 import cv2
 import numpy as np
@@ -10,7 +12,8 @@ import tensorflow as tf
 import tqdm
 
 from edge_autotune.api import server, client
-from edge_autotune.dnn import dataset, train
+from edge_autotune.dnn import dataset, train, infer
+# from edge_autotune.dnn.infer import Model
 from edge_autotune.motion import motion_detector as motion
 
 logger = logging.getLogger(__name__)
@@ -62,9 +65,8 @@ def _capture(
         frame_skip (int, optional): Frame skipping value. Defaults to 25.
         min_score (float, optional): Minimum score to accept groundtruth model's predictions as valid. Defaults to 0.5.
         max_images (int, optional): Stop when maximum is reached. Defaults to 1000.
-        min_images (int, optional): Prevents timeout to stop execution if the minimum of images has not been reached. 
+        min_images (int, optional): Prevents timeout to stop execution if the minimum of images has not been reached. Used only if timeout > 0. Defaults to 0.
         min_area (int, optional): Minimum area for countours to be considered as actual movement. Defaults to 1000.
-        Used only if timeout > 0. Defaults to 0.
         timeout (int, optional): timeout for capture. When reached, capture stops unless there is a minimum of images enforced. Defaults to 0.
         tmp_dir (str, optional): Path to temporary directory where intermediate results are written. Defaults to '/tmp'.
         first_frame_background (bool, optional): If True, first frame of the stream is chosen as background and never changed. Defaults to False.
@@ -203,16 +205,145 @@ def _autotune(
 
 def _deploy(
     stream: str,
-    dataset: str,
-    port: int):
-    """Start inference on stream. 
+    model: str,
+    label_map: str = None,
+    valid_classes: Tuple[str] = None,
+    min_score: float = 0.5,
+    disable_motion: bool = False,
+    min_area: int = 1000,
+    frame_skip: int = 1,
+    first_frame_background: bool = False,
+    window_size: Tuple[int, int] = [1280, 720],
+    save_to: str = None,
+    debug: bool = False):
+    """Start inference on stream using model.
 
     Args:
         stream (str): Input video stream (file or url).
         model (str): Path to dir containing saved_model or checkpoint from TensorFlow.
-        port (int): Port to listen to.
+        label_map (str, optional): Path to pbtxt label_map file. Defaults to None.
+        valid_classes (Tuple[str], optional): List of classes to draw in case of detection. Defaults to None.
+        min_score (float, optional): Confidence threshold to draw detections. Defaults to 0.5.
+        disable_motion (bool, optional): Disable motion detection for RoI proposal. Defaults to False.
+        min_area (int, optional): Minimum area for countours to be considered as actual movement. Defaults to 1000.
+        frame_skip (int, optional): Number of frames to skip between inferences. Defaults to 25.
+        first_frame_background (bool, optional): If True, first frame of the stream is chosen as background and never changed. Defaults to False.
+        window_size (Tuple[int,int], optional): Size of the window to show stream with detections [width, height]. Defaults to [1280,720]
+        save_to (str, option): Record output stream, if set. Path to output video with detection results. Defaults to None.
+        debug (bool, option): Show debug information, like current background. Defaults to None.
     """
-    print('app')
+    max_boxes = 100
+    use_motion = not disable_motion
+    background = None
+    motionDetector = None
+
+    if valid_classes:
+        valid_classes = valid_classes.split(',')
+    
+    if use_motion:
+        background = motion.Background(no_average=first_frame_background)
+        motionDetector = motion.MotionDetector(
+            background=background,
+            min_area_contour=min_area,
+            roi_size=(300, 300))
+
+    if save_to:
+        fourcc=cv2.VideoWriter_fourcc('M','J','P','G')
+        recorder = cv2.VideoWriter(save_to, fourcc, 25, window_size)
+
+    edge = infer.Model(
+        model_dir=model,
+        label_map=label_map,
+        min_score=min_score,
+        iou_threshold=0.3)
+    cap = cv2.VideoCapture(stream)
+    ret, frame = cap.read()
+
+    while ret:
+        ts0_bg = time.time()
+        if motionDetector:
+            regions_proposed, _ = motionDetector.detect(frame)
+        else:
+            regions_proposed = [[0, 0, frame.shape[1]-1, frame.shape[0]-1]]
+        ts1_bg = time.time()
+        total_time_bg = ts1_bg-ts0_bg
+
+        frame_rgb = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
+        
+        num_detections = 0
+        total_time_infer = 0
+        for roi in regions_proposed:
+            ts0_infer = time.time()
+            cropped_roi = np.array(frame_rgb[roi[1]:roi[3], roi[0]:roi[2]])
+            results = edge.run([cropped_roi])
+            ts1_infer = time.time()
+            total_time_infer += (ts1_infer-ts0_infer)
+            
+            boxes = results[0]['boxes']
+            scores = results[0]['scores']
+            labels = results[0]['labels']
+
+            for i in range(min(len(boxes), max_boxes)):
+                label = labels[i]
+                score = scores[i]
+                if valid_classes is not None and label not in valid_classes:
+                    continue 
+                if score >= min_score:
+                    ymin, xmin, ymax, xmax = tuple(boxes[i])
+                    (left, right, top, bottom) = (roi[0] + xmin * cropped_roi.shape[1], roi[0] + xmax * cropped_roi.shape[1],
+                                                  roi[1] + ymin * cropped_roi.shape[0], roi[1] + ymax * cropped_roi.shape[0])
+                    xmin, xmax, ymin, ymax = (left/frame.shape[1], right/frame.shape[1],
+                                              top/frame.shape[0], bottom/frame.shape[0])
+                    
+                    display_str = f'{label} ({score*100:.2f}%)'
+                    cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (0, 255, 0), 2)
+                    cv2.putText(frame, display_str, (int(left), int(top)-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                    num_detections += 1
+
+        frame = cv2.resize(frame, window_size)
+
+        if debug:
+            cv2.rectangle(frame, (10, 2), (180,100), (255,255,255), -1)
+            cv2.putText(frame, str(cap.get(cv2.CAP_PROP_POS_FRAMES)), (15, 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(frame, f'Bg: {total_time_bg:.3f} sec.', (15, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(frame, f'Infer: {total_time_infer:.3f} sec.', (15, 45),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(frame, f'Motion: {1 if not use_motion else len(regions_proposed)} regions.', (15, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(frame, f'Detection: {num_detections} objects.', (15, 75),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            if use_motion:
+                threshold = motionDetector.current_threshold.copy()
+                delta = motionDetector.current_delta.copy()
+                gray = motionDetector.current_gray.copy()
+                bg_color = background.background_color.copy()
+
+                threshold = cv2.resize(threshold, window_size)
+                delta = cv2.resize(delta, window_size)
+                gray = cv2.resize(gray, window_size)
+                bg_color = cv2.resize(bg_color, window_size)
+                cv2.imshow('Background Color', bg_color)
+                cv2.imshow('Threshold', threshold)
+                cv2.imshow('Delta', delta)
+                cv2.imshow('Gray', gray)
+
+        if save_to:
+            recorder.write(frame)
+
+        cv2.imshow(stream, frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            break
+
+        ret, frame = cap.read()
+
+    cv2.destroyAllWindows()
+    if save_to:
+        recorder.release()
 
 
 def _tool(

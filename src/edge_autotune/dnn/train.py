@@ -263,7 +263,7 @@ def train_loop(
     train_datasets=None,
     train_steps=None,
     use_tpu=False,
-    save_final_config=False,
+    save_final_config=True,
     checkpoint_every_n=1000,
     checkpoint_max_to_keep=7,
     record_summaries=True,
@@ -541,6 +541,9 @@ def train_loop(
                     loss))
             logged_step = global_step.value()
 
+          if global_step.value() % 10 == 0:
+              print(f'[step={global_step.value():.3f}] loss={loss}')
+
           if ((int(global_step.value()) - checkpointed_step) >=
               checkpoint_every_n):
             manager.save()
@@ -584,7 +587,7 @@ def train_loop_wrapper(
             use_tpu=False,
             fine_tune_checkpoint=base_model,
             label_map=label_map,
-            checkpoint_every_n=checkpoint_every_n,
+            checkpoint_every_n=min(checkpoint_every_n, num_train_steps),
             record_summaries=record_summaries,
             checkpoint_max_to_keep=max(1,int(num_train_steps/checkpoint_every_n)),
         )

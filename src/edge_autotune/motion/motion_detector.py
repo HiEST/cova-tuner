@@ -41,7 +41,7 @@ class Background:
         self.last_frames = []
         self.skipped = 0
 
-        self.frozen = False
+        self.frozen = no_average
 
     def update(self, frame: np.array):
         """Update background with new frame
@@ -49,12 +49,12 @@ class Background:
         :param frame: 3D numpy array containing a frame
         """
 
-        if self.frozen:
-            return self.background
-
         if self.background is None:
             self.background = GaussianBlur(frame)
             self.background_color = frame.copy()
+            return self.background
+
+        if self.frozen:
             return self.background
         
         self.skipped += 1
