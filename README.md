@@ -32,8 +32,8 @@ Edge AutoTune provides a series of tools aimed at assisting with a rapid deploym
 If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
 
 ``` Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, Josep Ll. Berral, Pubudu M. Silva, and David Carrera (2021).
-Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd```
-
+Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
+```
 
 ## Basic Usage
 Edge AutoTune provides multiple tools that are accessible from the command-line interface. 
