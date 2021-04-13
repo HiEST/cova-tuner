@@ -19,10 +19,9 @@
 
 <p align="center">
   <a href="#description">Description</a> •
+  <a href="#basic-usage">Basic Usage</a> •
   <a href="#installation">Installation</a> •
-  <a href="#usage">Usage</a> •
-  <a href="#configuration">Configuration</a> •
-  <a href="#citation">Citation</a>
+
 </p>
 
 ## Description
@@ -98,32 +97,64 @@ Moreover, we observe how a small square in the background is consitently and mis
 
 These numbers highlight the incapacity of the edge model, with an input size of 300x300x3, to distinguish objects that represent only a small portion of the total frame. Thanks to the region proposal using motion detection, the edge model does not only boost its confidence on its detections but also dramatically reduce its error rate.    
 
+
+## Basic Usage
+Edge AutoTune provides multiple tools that are accessible from the command-line interface. 
+The typical flow is start server with `server`, create training dataset with `capture`, fine-tune model with `tune`, and deploy with `deploy`.
+
+```console
+foo@bar:~$ edge_autotune --help
+Usage: edge_autotune [OPTIONS] COMMAND [ARGS]...
+
+  CLI for edge_autotune.
+
+Options:
+  --version  Show the version and exit.
+  --help     Show this message and exit.
+
+Commands:
+  server    Start annotation server.
+  capture   Capture and annotate images from stream and generate dataset.
+  tune      Start fine-tuning from base model's checkpoint.
+  deploy    Start client for inference using the tuned model.
+```
+
+
+### Citation
+If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
+
+> Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, Josep Ll. Berral, Pubudu M. Silva, and David Carrera (2021).
+Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
+
+
 ## Installation
 
+<!--
 <p align="center">
   <a href="https://drug2ways.readthedocs.io/en/latest/">
     <img src="http://readthedocs.org/projects/drug2ways/badge/?version=latest"
          alt="Documentation">
   </a>
-
+<!--
   <img src='https://img.shields.io/pypi/pyversions/drug2ways.svg' alt='Stable Supported Python Versions'/>
-  
+<!--
   <a href="https://pypi.python.org/pypi/drug2ways">
     <img src="https://img.shields.io/pypi/pyversions/drug2ways.svg"
          alt="PyPi">
   </a>
 </p>
+-->
 
-The latest stable code can be installed from [EdgeAutoTuner](https://pypi.python.org/pypi/edge_autotuner) with:
+<!-- The latest stable code can be installed from [Edge AutoTune](https://pypi.python.org/pypi/edge_autotuner) with:
 
 ```python
 python -m pip install edge-autotuner
 ```
-
+-->
 The most recent code can be installed from the source on [GitHub](https://github.com/HiEST/edgeautotuner) with:
 
 ```python
-python -m pip install git+https://github.com/danirivas/edge_autotuner.git
+python -m pip install git+https://github.com/HiEST/edgeautotuner.git
 ```
 
 For developers, the repository can be cloned from [GitHub](https://github.com/HiEST/edgeautotuner) and installed in
@@ -135,50 +166,22 @@ cd edgeautotuner
 python -m pip install -e .
 ```
 
-1. Install Python requirements:
-```pip install -r requirements.txt```
-
-2. Clone repository for VOC metrics:
-```git clone https://github.com/rafaelpadilla/Object-Detection-Metrics```
-
 ### Requirements:
-Edge AutoTune requires Python >=3.6 and makes use of the following packages:
+Edge AutoTune works with Python >=3.6 and uses the following packages:
 - tensorflow>=2.4.1
 - opencv-python
 - Pillow>=8.1.1
 - numpy
 - pandas
+- flask
+- flask-restful
 - tqdm
 
-CUDA is not a requirement to run. However, for the fine-tuning phase, it is encouraged to use a machine with a GPU installed and CUDA support.
+CUDA is not a requirement to run. However, for the fine-tuning step, it is recommended to use a machine with a GPU installed and CUDA support.
  
-- Download edge and reference model's checkpoint from Tensorflow Model Zoo. 
+- Download edge and groundtruth model's checkpoint from Tensorflow Model Zoo. 
 There is no restriction in what models to use but in our experiments we have used the following:
 >  **Edge**: [MobileNet V2 320x320](http://download.tensorflow.org/models/object_detection/tf2/20200711/ssd_mobilenet_v2_320x320_coco17_tpu-8.tar.gz)
 
 > **Reference**: [EfficientDet D2 768x768](http://download.tensorflow.org/models/object_detection/tf2/20200711/faster_rcnn_inception_resnet_v2_1024x1024_coco17_tpu-8.tar.gz)
 
-
-## Usage
-Edge AutoTune provides multiple tools that are accessible from the command-line interface.
-
-### Capture
-```edge_autotune capture --help```
-
-### Configuration
-Under `config/train_config.ini` you'll find an example of the config file with all the accepted options.
-
-Before you can start EAT, you'll have to set some paths in the config file. 
-
-### Setup paths
-`root_dir`: Absolute path to the root directory of the project.
-
-`pascalvoc_dir`: Path to the root of the cloned `Object-Detection-Metrics` repository.
-
-`workload_dir`: relative path to `training/detection`. The remaining paths will be relative to this one.  
-
-### Citation
-If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
-
-> Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, Josep Ll. Berral, Pubudu M. Silva, and David Carrera (2021).
-Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
