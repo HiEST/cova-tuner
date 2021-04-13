@@ -25,8 +25,14 @@
 </p>
 
 ## Description
-Edge AutoTune provides a series of tools aimed at assisting with a rapid deployment of CNN models for video analytics in edge cloud locations. The framework automates every step of the pipeline, from the creation of the dataset using images from the edge cameras to the deployment of the _specialized_ model. Edge AutoTune focuses makes use of a series of techniques that work best when used on images from static cameras. 
+Edge AutoTune provides a series of tools aimed at assisting with a rapid deployment of CNN models for video analytics in edge cloud locations. The framework automates every step of the pipeline, from the creation of the dataset using images from the edge cameras to the deployment of the _specialized_ model. Edge AutoTune brings a series of techniques together that work best when used on images from static cameras.
 <!-- an annotated training dataset to fine-tune neural network models using images from the same camera feed where the model is planned to be deployed.-->
+
+### Citation
+If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
+
+``` Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, Josep Ll. Berral, Pubudu M. Silva, and David Carrera (2021).
+Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd```
 
 
 ## Basic Usage
@@ -49,14 +55,6 @@ Commands:
   tune      Start fine-tuning from base model's checkpoint.
   deploy    Start client for inference using the tuned model.
 ```
-
-
-### Citation
-If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
-
-> Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, Josep Ll. Berral, Pubudu M. Silva, and David Carrera (2021).
-Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
-
 
 ## Installation
 
