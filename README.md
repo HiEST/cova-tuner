@@ -18,15 +18,18 @@
 </p>
 
 <p align="center">
-  <a href="#description">Description</a> •
-  <a href="#basic-usage">Basic Usage</a> •
+  <a href="#quickstart">Quickstart</a> •
+  <a href="#basic-usage">How To Use</a> •
   <a href="#installation">Installation</a> •
-
+  <a href="#how-does-it-work">How Does It Work?</a>
 </p>
 
-## Description
-Edge AutoTune provides a series of tools aimed at assisting with a rapid deployment of CNN models for video analytics in edge cloud locations. The framework automates every step of the pipeline, from the creation of the dataset using images from the edge cameras to the deployment of the _specialized_ model. Edge AutoTune brings a series of techniques together that work best when used on images from static cameras.
-<!-- an annotated training dataset to fine-tune neural network models using images from the same camera feed where the model is planned to be deployed.-->
+## Quickstart
+Edge AutoTune provides a series of tools aimed at assisting with a rapid deployment of CNN models for video analytics in edge cloud locations. It automates every step of the pipeline, from the creation of the dataset using images from the edge cameras, the _tuning_ of a generic model, all the way to the deployment of the _specialized_ model.
+
+Edge AutoTune takes one _edge_ model, one _groundtruth_ model, and a video stream as inputs and generates and _deploys_ a fine-tuned version of the _edge_ model specifically optimized for the specifics of the edge camera.
+
+Edge AutoTune brings a series of techniques together that work best when used on images from static cameras. Moreover, it assumes that the _groundtruth_ model has been trained on the classes we want the _edge_ model to detect, although more than one _groundtruth_ model can be used for this purpose.
 
 ### Citation
 If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
@@ -35,7 +38,7 @@ If you use Edge AutoTuner for your research please cite our [preprint](https://w
 Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
 ```
 
-## Basic Usage
+## How To Use
 Edge AutoTune provides multiple tools that are accessible from the command-line interface. 
 The typical flow is start server with `server`, create training dataset with `capture`, fine-tune model with `tune`, and deploy with `deploy`.
 
