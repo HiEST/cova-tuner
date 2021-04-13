@@ -1,0 +1,20 @@
+FROM tensorflow/tensorflow:2.4.1
+
+RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+    apt-get install -y -q --no-install-recommends git libgl1-mesa-dev protobuf-compiler && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN cd /tmp/ && \
+    git clone --depth 1 https://github.com/tensorflow/models && \
+    cd models/research/ && \
+    protoc object_detection/protos/*.proto --python_out=. && \
+    cp object_detection/packages/tf2/setup.py . && \
+    python -m pip install . && \
+    cd / && rm -rf models
+
+RUN cd / && \
+    git clone https://github.com/HiEST/edgeautotuner && \
+    cd edgeautotuner && \
+    pip install -e .
+
+ENTRYPOINT ["/usr/local/bin/python", "-m", "edge_autotune"]
