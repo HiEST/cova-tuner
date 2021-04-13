@@ -1,6 +1,6 @@
 # Examples
 
-# 0. Start server with groundtruth model
+## 0. Start server with groundtruth model
 
 The following command will start the server using the groundtruth model. By default, the server listens to the port 6000.
 ```console
