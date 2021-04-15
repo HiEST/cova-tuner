@@ -32,10 +32,10 @@ Edge AutoTune takes one _edge_ model, one _groundtruth_ model, and a video strea
 Edge AutoTune brings a series of techniques together that work best when used on images from static cameras. Moreover, it assumes that the _groundtruth_ model has been trained on the classes we want the _edge_ model to detect, although more than one _groundtruth_ model can be used for this purpose.
 
 ### Citation
-If you use Edge AutoTuner for your research please cite our [preprint](https://www.arxiv.org/to-be-submitted): 
+If you use Edge AutoTuner for your research please cite our [preprint](http://arxiv.org/abs/2104.06826): 
 
-``` Daniel Rivas-Barragan, Francesc Guim-Bernat, Jordà Polo, Josep Ll. Berral, Pubudu M. Silva, and David Carrera (2021).
-Towards Unsupervised Fine-Tuning for Edge Video Analytics. *arXiv* 2020.tbd; https://doi.org/tbd
+``` 
+Rivas, Daniel, Francesc Guim, Jordà Polo, Josep Ll Berral, Pubudu M. Silva, and David Carrera. “Towards Unsupervised Fine-Tuning for Edge Video Analytics.” ArXiv:2104.06826 [Cs, Eess], April 14, 2021. http://arxiv.org/abs/2104.06826.
 ```
 
 ## How To Use
