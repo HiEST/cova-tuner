@@ -34,9 +34,7 @@ Edge AutoTune brings a series of techniques together that work best when used on
 ### Citation
 If you use Edge AutoTuner for your research please cite our [preprint](http://arxiv.org/abs/2104.06826): 
 
-``` 
-Rivas, Daniel, Francesc Guim, Jordà Polo, Josep Ll Berral, Pubudu M. Silva, and David Carrera. “Towards Unsupervised Fine-Tuning for Edge Video Analytics.” ArXiv:2104.06826 [Cs, Eess], April 14, 2021. http://arxiv.org/abs/2104.06826.
-```
+> Rivas, Daniel, Francesc Guim, Jordà Polo, Josep Ll Berral, Pubudu M. Silva, and David Carrera. “Towards Unsupervised Fine-Tuning for Edge Video Analytics.” ArXiv:2104.06826 [Cs, Eess], April 14, 2021. http://arxiv.org/abs/2104.06826.
 
 ## How To Use
 Edge AutoTune provides multiple tools that are accessible from the command-line interface. 
