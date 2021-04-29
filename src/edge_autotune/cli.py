@@ -19,7 +19,7 @@ from typing import Tuple
 import click
 
 if not '--help' in click.get_os_args():
-  from edge_autotune.cli_helper import _server, _capture, _tune, _deploy
+  from edge_autotune.cli_helper import _server, _capture, _tune, _deploy, _deploy_multi_cam
 
 
 __all__ = ['main']
@@ -68,6 +68,14 @@ input_stream_option = click.option(
   '-s', '--stream',
   help='Path or url to the input stream to capture images.',
   type=click.Path(exists=True, dir_okay=False, file_okay=True),
+)
+
+input_stream_list_option = click.option(
+  '-s', '--stream-list',
+  help='Path or url to the input stream to capture images.',
+  multiple=True,
+  default=[]
+  # type=click.Path(exists=True, dir_okay=False, file_okay=True),
 )
 
 input_valid_classes_option = click.option(
@@ -285,6 +293,13 @@ input_window_size_option = click.option(
   default=(1280,720),
 )
 
+input_roi_size_option = click.option(
+  '--roi-size',
+  help='Minimum size of the proposed regions of interest.',
+  type=(int,int),
+  default=(1,1),
+)
+
 input_label_map_deploy_option = click.option(
   '-l', '--label-map',
   help='Path to the training dataset (tfrecord)',
@@ -299,6 +314,14 @@ input_save_to_option = click.option(
   default=None,
 )
 
+input_frame_skip_option = click.option(
+  '--frame-skip',
+  help='Frame skipping value',
+  default=1,
+  type=int,
+)
+
+
 @input_stream_option
 @input_model_option
 @input_label_map_deploy_option
@@ -309,6 +332,7 @@ input_save_to_option = click.option(
 @input_window_size_option
 @input_save_to_option
 @input_debug_option
+@input_frame_skip_option
 @main.command()
 def deploy(
   stream: str,
@@ -321,6 +345,7 @@ def deploy(
   window_size: Tuple[int,int] = [1280,720],
   save_to: str = None,
   debug: bool = False,
+  frame_skip: int = 1,
 ):
   """Start client for inference using the tuned model."""
   _deploy(
@@ -335,6 +360,52 @@ def deploy(
     window_size=window_size,
     save_to=save_to,
     debug=debug,
+    frame_skip=frame_skip,
+  )
+
+
+@input_stream_list_option
+@input_model_option
+@input_label_map_deploy_option
+@input_valid_classes_option
+@input_min_score_option
+@input_disable_motion_option
+@input_min_area_option
+@input_roi_size_option
+@input_window_size_option
+@input_save_to_option
+@input_debug_option
+@input_frame_skip_option
+@main.command()
+def deploy_multi_cam(
+  stream_list: str,
+  model: str,
+  label_map: str = None,
+  classes: str = None,
+  min_score: float = 0.5,
+  disable_motion: bool = False,
+  min_area: int = 1000,
+  roi_size: Tuple[int,int] = (1,1),
+  window_size: Tuple[int,int] = [1280,720],
+  save_to: str = None,
+  debug: bool = False,
+  frame_skip: int = 1,
+):
+  """Start client for inference using the tuned model."""
+  _deploy_multi_cam(
+    streams=stream_list,
+    model=model,
+    label_map=label_map,
+    valid_classes=classes,
+    min_score=min_score,
+    disable_motion=disable_motion,
+    min_area=min_area,
+    roi_size=roi_size,
+    first_frame_background=True,
+    window_size=window_size,
+    save_to=save_to,
+    debug=debug,
+    frame_skip=frame_skip,
   )
 
 if __name__ == '__main__':

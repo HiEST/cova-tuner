@@ -45,6 +45,7 @@ class Model:
                 raise Exception(f'label map file ({label_map}) not found.')
         else:
             self.label_map = get_dataset_labels('mscoco')
+            assert self.label_map
         
 
     def run(self, batch: list):

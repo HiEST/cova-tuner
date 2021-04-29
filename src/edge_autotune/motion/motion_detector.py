@@ -3,11 +3,18 @@
 
 """This module implements MotionDetetor and Background classes, and auxiliary methods"""
 
+from enum import Enum
 from typing import Tuple
 
 import cv2
 import numpy as np
 import imutils
+
+
+class BackgroundMethod(Enum):
+    FIRST = 1
+    AVERAGE = 2
+    PREVIOUS = 3
 
 
 class Background:
@@ -29,9 +36,12 @@ class Background:
                 Useful when the current background can be considered optimal.
     """
 
-    def __init__(self, no_average: bool = False, skip: int = 20, take: int = 10, use_last: int = 15):
+    def __init__(self, method: BackgroundMethod = BackgroundMethod.AVERAGE, skip: int = 20, take: int = 10, use_last: int = 15):
         self.background = None
         self.background_color = None
+
+        self.prev_background = None
+        self.method = method
         
         self.skip = skip
         self.use_last = use_last
@@ -41,7 +51,7 @@ class Background:
         self.last_frames = []
         self.skipped = 0
 
-        self.frozen = no_average
+        self.frozen = (method == BackgroundMethod.FIRST)
 
     def update(self, frame: np.array):
         """Update background with new frame
@@ -52,11 +62,21 @@ class Background:
         if self.background is None:
             self.background = GaussianBlur(frame)
             self.background_color = frame.copy()
+            self.prev_background = self.background
             return self.background
 
         if self.frozen:
             return self.background
-        
+
+        if self.method == BackgroundMethod.PREVIOUS:
+            prev_background = self.prev_background
+            self.prev_background = self.background
+
+            self.background = GaussianBlur(frame)
+            self.background_color = frame.copy()
+
+            return prev_background
+
         self.skipped += 1
 
         # skip this frame for the average
@@ -432,4 +452,6 @@ def first_pass_bg(
         bg = background.background_color.copy()
         cv2.imwrite(output, bg)
 
+
+# def is_contained(big, small):
 

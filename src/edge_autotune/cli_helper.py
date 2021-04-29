@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
+import itertools
 import logging
+import math
 from typing import Tuple
 import os
 import sys
@@ -8,6 +10,7 @@ import time
 
 import cv2
 import numpy as np
+import pandas as pd
 import tensorflow as tf
 import tqdm
 
@@ -15,6 +18,7 @@ from edge_autotune.api import server, client
 from edge_autotune.dnn import dataset, train, infer
 # from edge_autotune.dnn.infer import Model
 from edge_autotune.motion import motion_detector as motion
+from edge_autotune.motion import object_crop as crop
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +89,7 @@ def _capture(
         motionDetector = motion.MotionDetector(
             background=background,
             min_area_contour=min_area,
-            roi_size=(300, 300))
+            roi_size=(1, 1))
 
     print(f'capture: from {stream} to {output}. Connect to {server} (port={port}). Motion? {not disable_motion}')
 
@@ -117,8 +121,9 @@ def _capture(
             scores = results[0]['scores']
             class_ids = results[0]['class_ids']
             labels = results[0]['labels']
-
+            print(labels)
             for i in range(min(len(boxes), max_boxes)):
+                print(f'i: {i}')
                 class_id = int(class_ids[i])
                 label = labels[i]
                 score = scores[i]
@@ -212,10 +217,14 @@ def _deploy(
     disable_motion: bool = False,
     min_area: int = 1000,
     frame_skip: int = 1,
-    first_frame_background: bool = False,
+    first_frame_background: bool = True,
     window_size: Tuple[int, int] = [1280, 720],
     save_to: str = None,
-    debug: bool = False):
+    debug: bool = False,
+    model_is_classifier: bool = False, # FIXME: make it go through the cli pipeline.
+    play_fps: int = 1, # FIXME: make it go through the cli pipeline.
+    save_detections: str = '/tmp/detections.csv'
+    ):
     """Start inference on stream using model.
 
     Args:
@@ -237,11 +246,13 @@ def _deploy(
     background = None
     motionDetector = None
 
+    frame_lat = 0 # 1.0 / play_fps
+
     if valid_classes:
         valid_classes = valid_classes.split(',')
     
-    if use_motion:
-        background = motion.Background(no_average=first_frame_background)
+    if True: #use_motion:
+        background = motion.Background(method=motion.BackgroundMethod.FIRST)
         motionDetector = motion.MotionDetector(
             background=background,
             min_area_contour=min_area,
@@ -251,18 +262,38 @@ def _deploy(
         fourcc=cv2.VideoWriter_fourcc('M','J','P','G')
         recorder = cv2.VideoWriter(save_to, fourcc, 25, window_size)
 
-    edge = infer.Model(
-        model_dir=model,
-        label_map=label_map,
-        min_score=min_score,
-        iou_threshold=0.3)
+    if model_is_classifier:
+        edge = infer.Classifier(label_map=label_map)
+        edge.load_model(model)
+    else:
+        edge = infer.Model(
+            model_dir=model,
+            label_map=label_map,
+            min_score=min_score,
+            iou_threshold=0.3)
     cap = cv2.VideoCapture(stream)
+    ts0_decode_frame = time.time()
     ret, frame = cap.read()
-
+    ts1_decode_frame = time.time()
+    total_decoding_time = ts1_decode_frame-ts0_decode_frame
+    # start_frame = 0
+    next_frame = 45
+    df = []
+    df_stats = []
     while ret:
+        if next_frame == 700:
+            break
+        ts0_frame = time.time()
+        # time_since_last_frame = time.time() - start_frame
+        # if time_since_last_frame < frame_lat:
+        #     time.sleep(frame_lat-time_since_last_frame)
+        # start_frame = time.time()
+
         ts0_bg = time.time()
         if motionDetector:
             regions_proposed, _ = motionDetector.detect(frame)
+            if not use_motion and len(regions_proposed):  # FIXME: Add option to use motion to only skip inferences but process full frames.
+                regions_proposed = [[0, 0, frame.shape[1]-1, frame.shape[0]-1]]
         else:
             regions_proposed = [[0, 0, frame.shape[1]-1, frame.shape[0]-1]]
         ts1_bg = time.time()
@@ -272,6 +303,7 @@ def _deploy(
         
         num_detections = 0
         total_time_infer = 0
+        total_decode_infer = 0
         for roi in regions_proposed:
             ts0_infer = time.time()
             cropped_roi = np.array(frame_rgb[roi[1]:roi[3], roi[0]:roi[2]])
@@ -279,6 +311,7 @@ def _deploy(
             ts1_infer = time.time()
             total_time_infer += (ts1_infer-ts0_infer)
             
+            ts0_decode_infer = time.time()
             boxes = results[0]['boxes']
             scores = results[0]['scores']
             labels = results[0]['labels']
@@ -286,6 +319,7 @@ def _deploy(
             for i in range(min(len(boxes), max_boxes)):
                 label = labels[i]
                 score = scores[i]
+                # import pdb; pdb.set_trace()
                 if valid_classes is not None and label not in valid_classes:
                     continue 
                 if score >= min_score:
@@ -295,13 +329,55 @@ def _deploy(
                     xmin, xmax, ymin, ymax = (left/frame.shape[1], right/frame.shape[1],
                                               top/frame.shape[0], bottom/frame.shape[0])
                     
-                    display_str = f'{label} ({score*100:.2f}%)'
+                    ts1_decode_infer = time.time()
+                    total_decode_infer += ts1_decode_infer-ts0_decode_infer
+
+                    if score >= 0.5:
+                        display_str = f'{label} ({score*100:.2f}%)'
+                        cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (0, 0, 255), 2)
+                        cv2.putText(frame, display_str, (int(left), int(top)-10),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+                    num_detections += 1
+
+                    columns = ['cam', 'frame', 'label', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
+                    df.append([
+                        0,
+                        next_frame,
+                        label,
+                        score,
+                        left,
+                        top,
+                        right,
+                        bottom,
+                    ])
+
+                    ts0_decode_infer = time.time()
+
+                elif model_is_classifier:
+                    ymin, xmin, ymax, xmax = tuple(boxes[i])
+                    (left, right, top, bottom) = (roi[0] + xmin * cropped_roi.shape[1], roi[0] + xmax * cropped_roi.shape[1],
+                                                    roi[1] + ymin * cropped_roi.shape[0], roi[1] + ymax * cropped_roi.shape[0])
+                    xmin, xmax, ymin, ymax = (left/frame.shape[1], right/frame.shape[1],
+                                                top/frame.shape[0], bottom/frame.shape[0])
+
+                    display_str = f'NOT {label} ({(1-score)*100:.2f}%)'
                     cv2.rectangle(frame, (int(left), int(top)), (int(right), int(bottom)), (0, 255, 0), 2)
                     cv2.putText(frame, display_str, (int(left), int(top)-10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                    num_detections += 1
-
+        ts1_frame = time.time()
+        total_frame_time = ts1_frame - ts0_frame
+        df_stats.append([
+            next_frame,
+            total_frame_time,
+            total_decoding_time,
+            total_time_bg,    
+            total_time_infer,
+            total_decode_infer,
+            len(regions_proposed),
+        ])
+        
         frame = cv2.resize(frame, window_size)
 
         if debug:
@@ -339,12 +415,412 @@ def _deploy(
         if key == ord("q"):
             break
 
+        # ret, frame = cap.read()
+        next_frame = next_frame + frame_skip
+        cap.set(1, next_frame)
+
+        ts0_decode_frame = time.time()
         ret, frame = cap.read()
+        ts1_decode_frame = time.time()
+        total_decoding_time = ts1_decode_frame-ts0_decode_frame
+
 
     cv2.destroyAllWindows()
     if save_to:
         recorder.release()
 
+    columns = ['cam', 'frame', 'label', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
+    df = pd.DataFrame(df, columns=columns)
+    df.to_csv(save_detections, sep=',', index=False)
+
+    columns_stats = ['frame', 'total', 'decoding_frame', 'motion', 'inference', 'decoding_inference', 'regions']
+    df_stats = pd.DataFrame(df_stats, columns=columns_stats)
+    df_stats.to_csv('/tmp/stats.csv', sep=',', index=False)
+
+
+def _deploy_multi_cam(
+    streams: Tuple[str],
+    model: str,
+    label_map: str = None,
+    valid_classes: Tuple[str] = None,
+    min_score: float = 0.5,
+    disable_motion: bool = False,
+    min_area: int = 1000,
+    roi_size: Tuple[int,int] = (1,1),
+    frame_skip: int = 1,
+    first_frame_background: bool = False,
+    window_size: Tuple[int, int] = [1280, 720],
+    save_to: str = None,
+    debug: bool = False,
+    replicate_multi: bool = True,
+    save_detections: str = '/tmp/detections.csv'):
+    """Start inference on stream using model.
+
+    Args:
+        stream (Tuple[str]): List of input video stream (file or url).
+        model (str): Path to dir containing saved_model or checkpoint from TensorFlow.
+        label_map (str, optional): Path to pbtxt label_map file. Defaults to None.
+        valid_classes (Tuple[str], optional): List of classes to draw in case of detection. Defaults to None.
+        min_score (float, optional): Confidence threshold to draw detections. Defaults to 0.5.
+        disable_motion (bool, optional): Disable motion detection for RoI proposal. Defaults to False.
+        min_area (int, optional): Minimum area for countours to be considered as actual movement. Defaults to 1000.
+        roi_size (Tuple[int,int]):
+        frame_skip (int, optional): Number of frames to skip between inferences. Defaults to 25.
+        first_frame_background (bool, optional): If True, first frame of the stream is chosen as background and never changed. Defaults to False.
+        window_size (Tuple[int,int], optional): Size of the window to show stream with detections [width, height]. Defaults to [1280,720]
+        save_to (str, option): Record output stream, if set. Path to output video with detection results. Defaults to None.
+        debug (bool, option): Show debug information, like current background. Defaults to None.
+        save_detections (str, optional)
+    """
+    max_boxes = 100
+    use_motion = not disable_motion
+    background = None
+    motionDetector = None
+    no_show = not debug
+
+    if valid_classes:
+        valid_classes = valid_classes.split(',')
+
+    if save_to:
+        fourcc=cv2.VideoWriter_fourcc('M','J','P','G')
+        recorder = cv2.VideoWriter(save_to, fourcc, 25, window_size)
+
+    edge = infer.Model(
+        model_dir=model,
+        label_map=label_map,
+        min_score=min_score,
+        iou_threshold=0.3)
+
+    num_streams = len(streams) 
+    cam_grid_w = math.ceil(math.sqrt(num_streams))
+    cam_grid_h = math.ceil(num_streams / cam_grid_w)
+
+    if replicate_multi:
+        cap = [cv2.VideoCapture(streams[0])]
+    else:
+        cap = [cv2.VideoCapture(v) for v in streams]
+
+    if use_motion:
+        if replicate_multi:
+            background = [motion.Background(method=motion.BackgroundMethod.FIRST)]
+        else:
+            background = [motion.Background(method=motion.BackgroundMethod.FIRST) for _ in range(num_streams)]
+        motionDetector = [
+            motion.MotionDetector(
+                background=b,
+                min_area_contour=min_area,
+                roi_size=roi_size)
+            for b in background]
+
+    merged_frame = None
+
+    next_frame = 45
+    
+    df = []
+    df_stats = []
+    while True:
+        if next_frame == 700:
+            break
+        
+        if next_frame % 10 == 0:
+            print(f'Frame {next_frame}')
+        
+        ts0_frame = time.time()
+        next_frame = next_frame + frame_skip
+        
+        if replicate_multi:
+            t0_decoding = time.time()
+            ret, frame = cap[0].read()
+            cap[0].set(1, next_frame)
+            t1_decoding = time.time()
+
+            rets = [ret]
+            frames = [frame.copy() for _ in range(num_streams)]
+
+            total_decoding_time = t1_decoding - t0_decoding
+            total_decoding_time *= num_streams
+        else:
+            t0_decoding = time.time()
+            decoded = [cap[i].read() for i in range(len(cap))]
+            for c in cap:
+                c.set(1, next_frame)
+
+            rets = [d[0] for d in decoded]
+            frames = [d[1] for i,d in enumerate(decoded) if rets[i]]
+            t1_decoding = time.time()
+            total_decoding_time = t1_decoding - t0_decoding
+    
+        if not all(rets):
+            print(f'Reached end of at least one stream [{rets}]')
+            break
+
+        ts0_bg = time.time()
+        
+        if replicate_multi:
+            regions_proposed, _ = motionDetector[0].detect(frames[0])
+            # print(f'regions: {regions_proposed} - {len(regions_proposed)}')
+            # import pdb; pdb.set_trace()
+            if len(regions_proposed):
+                regions_proposed = [regions_proposed for _ in range(num_streams)]
+                # print(regions_proposed)
+            
+            ts1_bg = time.time()
+            total_time_bg = ts1_bg-ts0_bg
+            total_time_bg *= num_streams
+        else:
+            regions_proposed = [
+                mDetector.detect(frame)
+                for mDetector, frame in zip(motionDetector, frames)]
+            regions_proposed = [r[0] for r in regions_proposed]
+
+            ts1_bg = time.time()
+            total_time_bg = ts1_bg-ts0_bg
+
+        frames_rgb = [cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB) for frame in frames]
+        
+        num_detections = 0
+        total_time_infer = 0
+        total_crop_time = 0
+        total_decode_infer = 0
+        
+        num_regions_proposed = sum([len(r) for r in regions_proposed])
+        if num_regions_proposed:
+            merged_frame = None
+            object_map = None
+            objects = []
+
+            ts0_crop = time.time()
+            merged_frame, object_map, objects = crop.combine_border(frames_rgb, regions_proposed, border_size = 5)
+            regions_proposed = [[0, 0, merged_frame.shape[1]-1, merged_frame.shape[0]-1]]
+            ts1_crop = time.time()
+            total_crop_time = ts1_crop - ts0_crop
+
+            ts0_infer = time.time()
+            results = edge.run([merged_frame])
+            ts1_infer = time.time()
+            total_time_infer += (ts1_infer-ts0_infer)
+            
+            boxes = results[0]['boxes']
+            scores = results[0]['scores']
+            labels = results[0]['labels']
+
+            ts0_decode_infer =  time.time()
+            for i in range(min(len(boxes), max_boxes)):
+                label = labels[i]
+                score = scores[i]
+                # if valid_classes is not None and label not in valid_classes:
+                    # continue 
+                
+                ymin, xmin, ymax, xmax = tuple(boxes[i])
+
+                # Object/Detection coordinates in merged frame 
+                (merged_left, merged_right, merged_top, merged_bottom) = (
+                                                int(xmin * merged_frame.shape[1]), int(xmax * merged_frame.shape[1]),
+                                                int(ymin * merged_frame.shape[0]), int(ymax * merged_frame.shape[0]))
+                
+                # Find object id consulting the object map
+                obj_id = int(np.median(object_map[merged_top:merged_bottom,merged_left:merged_right]))
+                obj = objects[obj_id-1]
+
+                # iou = motion.compute_iou([merged_left, merged_top, merged_right, merged_bottom], obj.inf_box)
+                # if iou < 0.1:
+                #     color = (255, 255, 255)
+                    # display_str = f'{label} (Object {obj_id})'
+                if score >= 0.5 and debug:
+                    color = (0, 255, 0)
+                    display_str = f'{label} ({score*100:.2f}%)'
+                    cv2.rectangle(merged_frame, (merged_left, merged_top), (merged_right, merged_bottom), color, 2)
+                    cv2.putText(merged_frame, display_str, (merged_left, merged_top-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+                # if iou < 0.1:
+                #     continue
+
+                if debug and False:
+                    if score >= 0.5:
+                        color = (0, 255, 0)
+                    else:
+                        color = (0, 0, 255)
+                    if merged_left < obj.inf_box[0] or merged_right > obj.inf_box[2] \
+                        or merged_top < obj.inf_box[1] or merged_bottom > obj.inf_box[3]:
+                        color = (255, 255, 255)
+                    
+                    # unique_values = np.unique(object_map[merged_top:merged_bottom, merged_left:merged_right])
+                    # if len(unique_values) > 2:
+                        # print(f'obj ids: {unique_values} vs {values}')
+
+                    roi_width = merged_right-merged_left
+                    roi_height = merged_bottom-merged_top
+                    if roi_width > obj.width() or roi_height > obj.height():
+                        color = (255, 0, 0)
+
+                # Translate to coordinates in original frame from the camera
+                # roi is in camera frame coordinates  
+                roi = obj.box
+                # inference box is in merged frame coordinates and includes borders
+                box_in_inference = obj.inf_box
+
+                
+                # First, we adjust coordinates within merged frame by making sure borders are taken into account and subtracted
+                adjusted_coords = [
+                    max(merged_left, box_in_inference[0]),
+                    max(merged_top, box_in_inference[1]),
+                    min(merged_right, box_in_inference[2]),
+                    min(merged_bottom, box_in_inference[3]),
+                ]
+
+                # Second, we compute the relative object coordinates within RoI by removing box_in_inference coordinates
+                relative_coords = [
+                    adjusted_coords[0] - box_in_inference[0],
+                    adjusted_coords[1] - box_in_inference[1],
+                    adjusted_coords[2] - box_in_inference[0],
+                    adjusted_coords[3] - box_in_inference[1],
+                ]
+
+                # Second, we remove borders such that 0,0 within roi is 0,0
+                no_border_coords = [
+                    relative_coords[0]-obj.border[0],
+                    relative_coords[1]-obj.border[1],
+                    relative_coords[2]-obj.border[0],
+                    relative_coords[3]-obj.border[1],
+                ]
+
+                # Now, we can compute the absolute coordinates within the camera frames by adding roi coordinates
+                obj_coords = [
+                    no_border_coords[0] + roi[0],
+                    no_border_coords[1] + roi[1],
+                    no_border_coords[2] + roi[0],
+                    no_border_coords[3] + roi[1],
+                ]
+                                            
+                # (left, right, top, bottom) = (roi[0] + obj_coords[0], roi[0] + obj_coords[2],
+                #                                 roi[1] + obj_coords[1], roi[1] + obj_coords[3])
+                (left, top, right, bottom) = obj_coords
+
+                if left > right or top > bottom:
+                    continue
+                    import pdb; pdb.set_trace()
+                if score >= 0.5 and debug:
+                    display_str = f'{label} ({score*100:.2f}%)'
+                    # display_str = f'{label} (Object {obj_id})'
+                    cv2.rectangle(frames[obj.cam_id], (int(left), int(top)), (int(right), int(bottom)), color, 2)
+                    cv2.putText(frames[obj.cam_id], display_str, (int(left), int(top)-10),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+
+                num_detections += 1
+                # (24.0, 728.0, 19.0, 743.0)
+                if left > right:
+                    import pdb; pdb.set_trace()
+                df.append([
+                    obj.cam_id,
+                    next_frame-frame_skip,
+                    label,
+                    score,
+                    left,
+                    top,
+                    right,
+                    bottom
+                ])
+            ts1_decode_infer = time.time()
+            total_decode_infer = ts1_decode_infer - ts0_decode_infer
+
+        ts1_frame = time.time()
+        total_frame_time = ts1_frame - ts0_frame
+        df_stats.append([
+            next_frame,
+            total_frame_time,
+            total_decoding_time,
+            total_time_bg,    
+            total_time_infer,
+            total_decode_infer,
+            num_regions_proposed,
+        ])
+
+        if not no_show:
+            for video_id, frame in enumerate(frames):
+                frames[video_id] = cv2.resize(frame, (1280, 768))
+                frame = frames[video_id]
+                cv2.rectangle(frame, (10, frame.shape[0]-50), (len(streams[video_id])*20, frame.shape[0]-5), (255, 255, 255), -1)
+                cv2.putText(frame, streams[video_id], (15, frame.shape[0]-25), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,0,0))
+                # cv2.imshow(f'frame {video_id}', frame)
+
+            img_h, img_w, img_c = frames[0].shape
+
+            m_x = 0
+            m_y = 0
+
+            imgmatrix = np.zeros((img_h * cam_grid_h + m_y * (cam_grid_h - 1),
+                                img_w * cam_grid_w + m_x * (cam_grid_w - 1),
+                                img_c),
+                                np.uint8)
+
+            imgmatrix.fill(255)    
+
+            positions = itertools.product(range(cam_grid_w), range(cam_grid_h))
+            for (x_i, y_i), img in zip(positions, frames):
+                x = x_i * (img_w + m_x)
+                y = y_i * (img_h + m_y)
+                imgmatrix[y:y+img_h, x:x+img_w, :] = img    
+
+            all_frames = imgmatrix 
+            cv2.rectangle(all_frames, (10, 2), (180,130), (255,255,255), -1)
+            cv2.putText(all_frames, str(cap[0].get(cv2.CAP_PROP_POS_FRAMES)), (15, 15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(all_frames, f'Decoding: {total_decoding_time:.3f} sec.', (15, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(all_frames, f'Bg: {total_time_bg:.3f} sec.', (15, 45),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(all_frames, f'Infer: {total_time_infer:.3f} sec.', (15, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(all_frames, f'Motion: {1 if not use_motion else len(regions_proposed)} regions.', (15, 75),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(all_frames, f'Cropping: {total_crop_time:.3f} sec.', (15, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+            cv2.putText(all_frames, f'Detection: {num_detections} objects.', (15, 105),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+
+            if debug:
+                mdet = motionDetector[0]
+                threshold = mdet.current_threshold.copy()
+                delta = mdet.current_delta.copy()
+                gray = mdet.current_gray.copy()
+                bg_color = background[0].background_color.copy()
+
+                threshold = cv2.resize(threshold, window_size)
+                delta = cv2.resize(delta, window_size)
+                gray = cv2.resize(gray, window_size)
+                bg_color = cv2.resize(bg_color, window_size)
+                cv2.imshow('Background Color', bg_color)
+                cv2.imshow('Threshold', threshold)
+                cv2.imshow('Delta', delta)
+                cv2.imshow('Gray', gray)
+
+                if merged_frame is not None:
+                    merged_frame = cv2.resize(merged_frame, (1000, 1000))
+                    merged_frame = merged_frame / 255.0
+                    cv2.imshow("merged", merged_frame)
+
+            cv2.imshow('Multi Cam View', all_frames)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
+                break
+            elif key == ord('p'):
+                cv2.waitKey(0)
+
+        if save_to:
+            recorder.write(frame)
+
+    cv2.destroyAllWindows()
+    if save_to:
+        recorder.release()
+
+    columns = ['cam', 'frame', 'label', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
+    df = pd.DataFrame(df, columns=columns)
+    df.to_csv(save_detections, sep=',', index=False)
+
+    columns_stats = ['frame', 'total', 'decoding_frame', 'motion', 'inference', 'decoding_inference', 'regions']
+    df_stats = pd.DataFrame(df_stats, columns=columns_stats)
+    df_stats.to_csv('/tmp/stats.csv', sep=',', index=False)
+    
 
 def _tool(
     tool: str,
