@@ -305,13 +305,14 @@ def merge_overlapping_boxes(boxes: list, iou: float = 0.01):
             intersections = [compute_iou(box, box2) if j != i else 1 for j, box2 in enumerate(boxes)]
             overlap = np.where(np.array(intersections) > iou)[0]
             not_overlap = np.where(np.array(intersections) <= iou)[0]
+            # import pdb; pdb.set_trace()
                 
             if len(overlap) <= 1:
                 continue
 
-            for over in overlap:
-                if over == i:
-                    continue
+            # for over in overlap:
+            #     if over == i:
+            #         continue
             
             overlapping = [boxes[idx] for idx in overlap]
             new_box = merge_all_boxes(np.array(overlapping))
