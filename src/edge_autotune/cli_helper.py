@@ -14,6 +14,14 @@ import pandas as pd
 import tensorflow as tf
 import tqdm
 
+#Prometheus
+import prometheus_client as prom
+import random
+from threading import Thread
+
+from flask import Flask, request
+from flask_prometheus import monitor
+
 from edge_autotune.api import server, client
 from edge_autotune.dnn import dataset, train, infer
 # from edge_autotune.dnn.infer import Model
@@ -21,6 +29,18 @@ from edge_autotune.motion import motion_detector as motion
 from edge_autotune.motion import object_crop as crop
 
 logger = logging.getLogger(__name__)
+
+metric_bgs_lat=prom.Gauge('multicam_bgs_fps',"Background Subtraction latency in ms")
+metric_inf_lat=prom.Gauge('multicam_inf_fps',"Inference latency in ms")
+metric_dec_lat=prom.Gauge('multicam_dec_fps',"Decoding latency in ms")
+metric_num_dets=prom.Gauge('multicam_num_objects', "Number of Objects Detected")
+metric_num_rois=prom.Gauge('multicam_num_rois', "Number of RoIs proposed")
+metric_fps=prom.Gauge('multicam_fps',"App's fps")
+metric_lat_histo=prom.Histogram('multicam_latency', 'Latency in ms.')
+SLO_metric_fps=prom.Gauge('multicam_SLO_fps',"App's latency SLO in fps")
+app = Flask("multicam")
+
+SLO_target=12
 
 
 def _server(
@@ -519,14 +539,13 @@ def _deploy_multi_cam(
 
     merged_frame = None
 
+    processed_frames = 0
     next_frame = 1
+    update_metrics_interval = 100
     
     df = [] 
     df_stats = []
-    while True: 
-        if next_frame % 10 == 0:
-            print(f'Frame {next_frame}')
-        
+    while True:
         ts0_frame = time.time()
         next_frame = next_frame + frame_skip
         
@@ -739,6 +758,19 @@ def _deploy_multi_cam(
             num_regions_proposed,
         ])
 
+
+        processed_frames += 1
+        if processed_frames % update_metrics_interval == 0:
+            metric_bgs_lat.set(total_time_bg)
+            metric_dec_lat.set(total_decoding_time)
+            metric_inf_lat.set(total_time_infer)
+            metric_num_dets.set(num_detections)
+            metric_num_rois.set(num_regions_proposed)
+            metric_fps.set(1000/total_frame_time*update_metrics_interval)
+            metric_lat_histo.observe(total_frame_time)
+            SLO_metric_fps.set(SLO_target)
+
+
         if not no_show:
             for video_id, frame in enumerate(frames):
                 frames[video_id] = cv2.resize(frame, (1280, 768))
@@ -813,7 +845,8 @@ def _deploy_multi_cam(
         if save_to:
             recorder.write(frame)
 
-    cv2.destroyAllWindows()
+    if not no_show:
+        cv2.destroyAllWindows()
     if save_to:
         recorder.release()
 
