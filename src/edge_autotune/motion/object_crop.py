@@ -3,6 +3,7 @@
 
 """This module implements methods to perform object-level scheduling through cropping and merge of objects"""
 
+from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 import math
@@ -103,7 +104,7 @@ def grid_fit_decreasing(objects: list, xlim: int):
             max_row_height = obj.height()
         if row_width > max_row_width:
             max_row_width = row_width
-        
+
     row_width = max_row_width
     row_height += max_row_height
 
@@ -172,7 +173,7 @@ def merge(img, boxes: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
     print(f'Trying to find solution with limit {xlim}.')
     while True:
         objects, img_shape = grid_fit_decreasing(objects, xlim)
-        area = img_shape[0]*img_shape[1]
+        area = max(img_shape)*max(img_shape)  # img will be squared, so we compute area wrt larges dim
         if prev_solution['shape'] is not None:
             if area == prev_solution['area']:
                 break
@@ -185,7 +186,7 @@ def merge(img, boxes: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
 
         prev_solution['shape'] = img_shape
         prev_solution['area'] = area
-        prev_solution['objects'] = objects.copy()
+        prev_solution['objects'] = deepcopy(objects)
         # Try again with wider image
         xlim = max(img_shape)
 
@@ -262,9 +263,10 @@ def combine_boxes(objects: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
     }
 
     print(f'Trying to find solution with limit {xlim}.')
+
     while True:
         objects, img_shape = grid_fit_decreasing(objects, xlim)
-        area = img_shape[0]*img_shape[1]
+        area = max(img_shape)*max(img_shape)  # img will be squared, so we compute area wrt larges dim
         if prev_solution['shape'] is not None:
             if area == prev_solution['area']:
                 break
@@ -277,11 +279,12 @@ def combine_boxes(objects: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
 
         prev_solution['shape'] = img_shape
         prev_solution['area'] = area
-        prev_solution['objects'] = objects.copy()
+        prev_solution['objects'] = deepcopy(objects)
         # Try again with wider image
         xlim = max(img_shape)
         # print(f'Found solution with area {area}. Trying again with limit {xlim}.')
 
+    objects.sort(key=lambda x: x.obj_id)
     return objects, img_shape
 
 
@@ -313,7 +316,7 @@ def combine_border(frames: list, box_lists: list, border_size: int = 10):
         roi = obj.box
         inf_roi = obj.inf_box
         
-        img_shape = frame[roi[1]:roi[3], roi[0]:roi[2]].shape
+        roi_shape = frame[roi[1]:roi[3], roi[0]:roi[2]].shape
         merged_shape = merged_img[inf_roi[1]:inf_roi[3], inf_roi[0]:inf_roi[2]].shape
         cropped_object = frame[roi[1]:roi[3], roi[0]:roi[2]].copy()
         crop_with_border = cv2.copyMakeBorder(cropped_object,
