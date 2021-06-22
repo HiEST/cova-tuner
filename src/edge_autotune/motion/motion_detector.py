@@ -15,6 +15,8 @@ class BackgroundMethod(Enum):
     FIRST = 1
     AVERAGE = 2
     PREVIOUS = 3
+    ACUM_MEAN = 4
+    ACUM_MEDIAN = 5
 
 
 class Background:
@@ -62,6 +64,7 @@ class Background:
         if self.background is None:
             self.background = GaussianBlur(frame)
             self.background_color = frame.copy()
+            self.last_frames.append(self.background_color)
             self.prev_background = self.background
             return self.background
 
@@ -79,8 +82,19 @@ class Background:
 
         self.skipped += 1
 
+        if self.method in [BackgroundMethod.ACUM_MEAN, BackgroundMethod.ACUM_MEAN]:
+            self.last_frames.append(frame.copy())
+            if len(self.last_frames) > self.use_last:
+                self.last_frames = self.last_frames[1:]
+            if self.method == BackgroundMethod.ACUM_MEAN:
+                self.background_color = np.mean(self.last_frames, axis=0).astype(np.uint8)
+            else:
+                self.background_color = np.median(self.last_frames, axis=0).astype(np.uint8)
+            self.background = GaussianBlur(self.background_color)
+            return self.background
+
         # skip this frame for the average
-        if self.skipped <= self.skip:
+        elif self.skipped <= self.skip:
             return self.background
         
         # count this frame for the average
@@ -342,12 +356,79 @@ def merge_near_boxes(boxes: list, proximity: float = 1.05):
     return boxes
 
 
+def resize_if_smaller(box: list, max_dims: tuple, min_size: tuple = (32,32)):
+    """[summary]
+
+    Args:
+        box (list): Bounding Box coordinates [left, top, right, bottom].
+        max_dims (tuple): Maximum size of x, y dimensions to max out new box coordinates.
+        min_size (tuple, optional): Resize box if it is smaller than min_size on any dimension. Defaults to (32,32).
+
+    Returns:
+        list: Bounding box coordinates of the new resized box [left, top, right, bottom].
+    """
+    # import pdb; pdb.set_trace()
+    if box[2]-box[0] > min_size[0] and box[3]-box[1] > min_size[1]:
+        return box
+
+    box_size = [
+        box[2]-box[0],
+        box[3]-box[1],
+    ]
+
+    new_size = [
+        max(min_size[0], box_size[0]),
+        max(min_size[1], box_size[1]),
+    ]
+
+    center = [
+        box[0]+(box[2]-box[0])/2,
+        box[1]+(box[3]-box[1])/2,
+    ]
+
+    offset = [
+        new_size[0]/2,
+        new_size[1]/2,
+    ]
+
+    new_box = [
+        int(center[0]-offset[0]),
+        int(center[1]-offset[1]),
+        int(center[0]+offset[0]),
+        int(center[1]+offset[1]),
+    ]
+
+    if new_box[0] < 0:
+        new_box[2] += abs(new_box[0])
+        new_box[0] = 0
+    if new_box[1] < 0:
+        new_box[3] += abs(new_box[1])
+        new_box[1] = 0
+    if new_box[2] >= max_dims[0]:
+        new_box[0] -= (abs(new_box[2]) - (max_dims[0]+1))
+        new_box[2] = max_dims[0]-1
+    if new_box[3] >= max_dims[1]:
+        new_box[1] -= (abs(new_box[3]) - (max_dims[1]+1))
+        new_box[3] = max_dims[1]-1
+
+    new_box = [
+        int(max(0, new_box[0])),
+        int(max(0, new_box[1])),
+        int(min(max_dims[0], new_box[2])),
+        int(min(max_dims[1], new_box[3])),
+    ]
+
+    return new_box
+
+
 def propose_rois(
     boxes: list,
     roi_width: int,
     roi_height: int,
     max_width: int,
-    max_height: int):
+    max_height: int,
+    roi_increment: float = None,
+    force_aspect: float = None):
     """Propose regions of interest of size at least (roi_width, roi_height).
     Coordinates are guaranteed to be between (0, 0) and (max_width, max_height) and keep aspect ratio.
 
@@ -357,6 +438,8 @@ def propose_rois(
         roi_height (int): Minimum height of the proposed RoIs.
         max_width (int): Maximum x coordinate of the proposed RoIs.
         max_height (int): Maximum y coordinate of the proposed RoIs.
+        roi_increment (float, optional): If set, resizes the resulting RoIs. Defaults to None.
+        force_aspect (float, optional): If set, forces the aspect ratio of the resulting RoIs. Defaults to None.
 
     Returns:
         list: list of regions proposed. Each is a tuple [xmin, ymin, xmax, ymax]
@@ -364,14 +447,15 @@ def propose_rois(
     roi_proposals = []
     boxes = np.array(boxes)
 
-    roi_ar = roi_width / roi_height
-
-    if len(boxes) > 1:
-        boxes = non_max_suppression_fast(boxes)
+    if force_aspect:
+        roi_ar = force_aspect
+    else:
+        roi_ar = roi_width / roi_height
 
     for box in boxes:
         width = box[2] - box[0]
         height = box[3] - box[1]
+    
         if width < roi_width and height < roi_height:
             new_roi = (roi_width, roi_height)
 
@@ -387,6 +471,12 @@ def propose_rois(
             new_roi = [
                 width,
                 height * (aspect/roi_ar),
+            ]
+
+        if roi_increment:
+            new_roi = [
+                new_roi[0]*roi_increment,
+                new_roi[1]*roi_increment,
             ]
 
         # Offset from the center of the box
@@ -407,8 +497,8 @@ def propose_rois(
 
         roi_proposals.append(box)
 
-    if len(roi_proposals) > 1:
-        roi_proposals = non_max_suppression_fast(np.array(roi_proposals))
+    # if len(roi_proposals) > 1:
+    #     roi_proposals = non_max_suppression_fast(np.array(roi_proposals))
 
     roi_proposals = merge_overlapping_boxes(roi_proposals, 0.05)
     return roi_proposals
