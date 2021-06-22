@@ -516,6 +516,8 @@ def _deploy_multi_cam(
         cap = [cv2.VideoCapture(streams[0])]
     else:
         cap = [cv2.VideoCapture(v) for v in streams]
+    
+    frame_limit = cap[0].get(cv.CAP_PROP_FRAME_COUNT)
 
     if use_motion:
         if replicate_multi:
@@ -546,6 +548,9 @@ def _deploy_multi_cam(
     df = [] 
     df_stats = []
     while True:
+        if next_frame >= frame_limit:
+            break
+        
         ts0_frame = time.time()
         next_frame = next_frame + frame_skip
         
@@ -564,7 +569,7 @@ def _deploy_multi_cam(
             t0_decoding = time.time()
             decoded = [cap[i].read() for i in range(len(cap))]
             for i, c in enumerate(cap):
-                cap_next_frame = (next_frame+i*frame_shift)#%frame_limit
+                cap_next_frame = (next_frame+i*frame_shift)%frame_limit
                 c.set(1, cap_next_frame)
 
             rets = [d[0] for d in decoded]
@@ -613,7 +618,7 @@ def _deploy_multi_cam(
             objects = []
 
             ts0_crop = time.time()
-            merged_frame, object_map, objects = crop.combine_border(frames_rgb, regions_proposed, border_size = 10)
+            merged_frame, object_map, objects = crop.combine_border(frames_rgb, regions_proposed, border_size = 5)
             regions_proposed = [[0, 0, merged_frame.shape[1]-1, merged_frame.shape[0]-1]]
             ts1_crop = time.time()
             total_crop_time = ts1_crop - ts0_crop
@@ -631,8 +636,8 @@ def _deploy_multi_cam(
             for i in range(min(len(boxes), max_boxes)):
                 label = labels[i]
                 score = scores[i]
-                # if valid_classes is not None and label not in valid_classes:
-                    # continue 
+                if valid_classes is not None and label not in valid_classes:
+                    continue 
                 
                 ymin, xmin, ymax, xmax = tuple(boxes[i])
 
@@ -735,7 +740,7 @@ def _deploy_multi_cam(
                     import pdb; pdb.set_trace()
                 df.append([
                     obj.cam_id,
-                    next_frame-frame_skip,
+                    (next_frame-frame_skip+(obj.cam_id*frame_shift))%frame_limit,
                     label,
                     score,
                     left,
@@ -852,6 +857,7 @@ def _deploy_multi_cam(
 
     columns = ['cam', 'frame', 'label', 'score', 'xmin', 'ymin', 'xmax', 'ymax']
     df = pd.DataFrame(df, columns=columns)
+    df.sort_values(['frame', 'score'])
     df.to_csv(save_detections, sep=',', index=False)
 
     columns_stats = ['frame', 'total', 'decoding_frame', 'motion', 'inference', 'decoding_inference', 'regions']
