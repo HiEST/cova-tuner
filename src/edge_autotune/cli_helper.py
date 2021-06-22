@@ -14,6 +14,14 @@ import pandas as pd
 import tensorflow as tf
 import tqdm
 
+#Prometheus
+import prometheus_client as prom
+import random
+from threading import Thread
+
+from flask import Flask, request
+from flask_prometheus import monitor
+
 from edge_autotune.api import server, client
 from edge_autotune.dnn import dataset, train, infer
 # from edge_autotune.dnn.infer import Model
@@ -21,6 +29,18 @@ from edge_autotune.motion import motion_detector as motion
 from edge_autotune.motion import object_crop as crop
 
 logger = logging.getLogger(__name__)
+
+metric_bgs_lat=prom.Gauge('multicam_bgs_fps',"Background Subtraction latency in ms")
+metric_inf_lat=prom.Gauge('multicam_inf_fps',"Inference latency in ms")
+metric_dec_lat=prom.Gauge('multicam_dec_fps',"Decoding latency in ms")
+metric_num_dets=prom.Gauge('multicam_num_objects', "Number of Objects Detected")
+metric_num_rois=prom.Gauge('multicam_num_rois', "Number of RoIs proposed")
+metric_fps=prom.Gauge('multicam_fps',"App's fps")
+metric_lat_histo=prom.Histogram('multicam_latency', 'Latency in ms.')
+SLO_metric_fps=prom.Gauge('multicam_SLO_fps',"App's latency SLO in fps")
+app = Flask("multicam")
+
+SLO_target=12
 
 
 def _server(
@@ -281,14 +301,7 @@ def _deploy(
     df = []
     df_stats = []
     while ret:
-        if next_frame == 700:
-            break
         ts0_frame = time.time()
-        # time_since_last_frame = time.time() - start_frame
-        # if time_since_last_frame < frame_lat:
-        #     time.sleep(frame_lat-time_since_last_frame)
-        # start_frame = time.time()
-
         ts0_bg = time.time()
         if motionDetector:
             regions_proposed, _ = motionDetector.detect(frame)
@@ -410,10 +423,10 @@ def _deploy(
         if save_to:
             recorder.write(frame)
 
-        cv2.imshow(stream, frame)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            break
+        # cv2.imshow(stream, frame)
+        # key = cv2.waitKey(1) & 0xFF
+        # if key == ord("q"):
+            # break
 
         # ret, frame = cap.read()
         next_frame = next_frame + frame_skip
@@ -424,8 +437,10 @@ def _deploy(
         ts1_decode_frame = time.time()
         total_decoding_time = ts1_decode_frame-ts0_decode_frame
 
-
-    cv2.destroyAllWindows()
+        # if next_frame == (24*25-10):
+        #     cv2.imwrite('/tmp/frame.png', frame)
+            
+    # cv2.destroyAllWindows()
     if save_to:
         recorder.release()
 
@@ -452,7 +467,7 @@ def _deploy_multi_cam(
     window_size: Tuple[int, int] = [1280, 720],
     save_to: str = None,
     debug: bool = False,
-    replicate_multi: bool = True,
+    replicate_multi: bool = False,
     save_detections: str = '/tmp/detections.csv'):
     """Start inference on stream using model.
 
@@ -477,6 +492,8 @@ def _deploy_multi_cam(
     background = None
     motionDetector = None
     no_show = not debug
+
+    frame_shift = 100
 
     if valid_classes:
         valid_classes = valid_classes.split(',')
@@ -512,19 +529,23 @@ def _deploy_multi_cam(
                 roi_size=roi_size)
             for b in background]
 
+
+    if frame_shift:
+        # Set background using first frame of the first stream
+        for i, c in enumerate(cap):
+            ret, frame = c.read()
+            motionDetector[i].background.update(frame)
+            c.set(1, i*frame_shift)
+
     merged_frame = None
 
-    next_frame = 45
+    processed_frames = 0
+    next_frame = 1
+    update_metrics_interval = 100
     
-    df = []
+    df = [] 
     df_stats = []
     while True:
-        if next_frame == 700:
-            break
-        
-        if next_frame % 10 == 0:
-            print(f'Frame {next_frame}')
-        
         ts0_frame = time.time()
         next_frame = next_frame + frame_skip
         
@@ -542,8 +563,9 @@ def _deploy_multi_cam(
         else:
             t0_decoding = time.time()
             decoded = [cap[i].read() for i in range(len(cap))]
-            for c in cap:
-                c.set(1, next_frame)
+            for i, c in enumerate(cap):
+                cap_next_frame = (next_frame+i*frame_shift)#%frame_limit
+                c.set(1, cap_next_frame)
 
             rets = [d[0] for d in decoded]
             frames = [d[1] for i,d in enumerate(decoded) if rets[i]]
@@ -558,11 +580,8 @@ def _deploy_multi_cam(
         
         if replicate_multi:
             regions_proposed, _ = motionDetector[0].detect(frames[0])
-            # print(f'regions: {regions_proposed} - {len(regions_proposed)}')
-            # import pdb; pdb.set_trace()
             if len(regions_proposed):
                 regions_proposed = [regions_proposed for _ in range(num_streams)]
-                # print(regions_proposed)
             
             ts1_bg = time.time()
             total_time_bg = ts1_bg-ts0_bg
@@ -585,12 +604,16 @@ def _deploy_multi_cam(
         
         num_regions_proposed = sum([len(r) for r in regions_proposed])
         if num_regions_proposed:
+            for roi in regions_proposed[0]:
+                cv2.rectangle(frames[0], (roi[0], roi[1]), (roi[2], roi[3]), (255, 0, 0), 2)
+                cv2.putText(frames[0], f'{roi[2]-roi[0]}x{roi[3]-roi[1]}', (roi[0], roi[1]-20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 2)
             merged_frame = None
             object_map = None
             objects = []
 
             ts0_crop = time.time()
-            merged_frame, object_map, objects = crop.combine_border(frames_rgb, regions_proposed, border_size = 5)
+            merged_frame, object_map, objects = crop.combine_border(frames_rgb, regions_proposed, border_size = 10)
             regions_proposed = [[0, 0, merged_frame.shape[1]-1, merged_frame.shape[0]-1]]
             ts1_crop = time.time()
             total_crop_time = ts1_crop - ts0_crop
@@ -626,7 +649,7 @@ def _deploy_multi_cam(
                 # if iou < 0.1:
                 #     color = (255, 255, 255)
                     # display_str = f'{label} (Object {obj_id})'
-                if score >= 0.5 and debug:
+                if debug and score >= 0.5:
                     color = (0, 255, 0)
                     display_str = f'{label} ({score*100:.2f}%)'
                     cv2.rectangle(merged_frame, (merged_left, merged_top), (merged_right, merged_bottom), color, 2)
@@ -635,7 +658,7 @@ def _deploy_multi_cam(
                 # if iou < 0.1:
                 #     continue
 
-                if debug and False:
+                if debug: # and False:
                     if score >= 0.5:
                         color = (0, 255, 0)
                     else:
@@ -699,7 +722,7 @@ def _deploy_multi_cam(
                 if left > right or top > bottom:
                     continue
                     import pdb; pdb.set_trace()
-                if score >= 0.5 and debug:
+                if debug and score >= 0.2:
                     display_str = f'{label} ({score*100:.2f}%)'
                     # display_str = f'{label} (Object {obj_id})'
                     cv2.rectangle(frames[obj.cam_id], (int(left), int(top)), (int(right), int(bottom)), color, 2)
@@ -734,6 +757,19 @@ def _deploy_multi_cam(
             total_decode_infer,
             num_regions_proposed,
         ])
+
+
+        processed_frames += 1
+        if processed_frames % update_metrics_interval == 0:
+            metric_bgs_lat.set(total_time_bg)
+            metric_dec_lat.set(total_decoding_time)
+            metric_inf_lat.set(total_time_infer)
+            metric_num_dets.set(num_detections)
+            metric_num_rois.set(num_regions_proposed)
+            metric_fps.set(1000/total_frame_time*update_metrics_interval)
+            metric_lat_histo.observe(total_frame_time)
+            SLO_metric_fps.set(SLO_target)
+
 
         if not no_show:
             for video_id, frame in enumerate(frames):
@@ -809,7 +845,8 @@ def _deploy_multi_cam(
         if save_to:
             recorder.write(frame)
 
-    cv2.destroyAllWindows()
+    if not no_show:
+        cv2.destroyAllWindows()
     if save_to:
         recorder.release()
 
