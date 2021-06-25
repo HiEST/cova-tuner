@@ -20,7 +20,7 @@ from edge_autotune.dnn.metrics import compute_area_match
 
 parser = argparse.ArgumentParser(description='This program shows how to use background subtraction methods provided by \
                                               OpenCV. You can process both videos and images.')
-parser.add_argument('--video', type=str, help='Path to a video or a sequence of image.', default='vtest.avi')
+parser.add_argument('-v', '--video', type=str, help='Path to a video or a sequence of image.', default='vtest.avi')
 parser.add_argument('--algo', type=str, help='Background subtraction method (KNN, MOG2).', default='MOG2')
 parser.add_argument('--gt', type=str, help='Path to ground-truth.')
 parser.add_argument('--show', default=False, action='store_true', help='Show window with results.')
@@ -37,11 +37,11 @@ total_frames = capture.get(cv.CAP_PROP_FRAME_COUNT)
 if total_frames < 1000:
     sys.exit()
 
-# video_width = capture.get(cv.CAP_PROP_FRAME_WIDTH)
-# video_height = capture.get(cv.CAP_PROP_FRAME_HEIGHT)
+video_width = capture.get(cv.CAP_PROP_FRAME_WIDTH)
+video_height = capture.get(cv.CAP_PROP_FRAME_HEIGHT)
 
-video_width = 1280
-video_height = 720
+resize_bg_width = 1280
+resize_bg_height = 720
 
 backMean = Background(BackgroundMethod.ACUM_MEAN, use_last=10, skip=50)
 backMOG = cv.createBackgroundSubtractorMOG2()
@@ -87,96 +87,16 @@ def get_mask(background, frame, kernel):
     return current_threshold
 
 
-# def compute_iou(boxA: list, boxB: list):
-
-# 	# determine the (x, y)-coordinates of the intersection rectangle
-# 	xA = max(boxA[0], boxB[0])
-# 	yA = max(boxA[1], boxB[1])
-# 	xB = min(boxA[2], boxB[2])
-# 	yB = min(boxA[3], boxB[3])
-
-# 	# compute the area of intersection rectangle
-# 	interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
-	
-#     # compute the area of both the prediction and ground-truth
-# 	# rectangles
-# 	boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
-# 	boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
-	
-#     # compute the intersection over union by taking the intersection
-# 	# area and dividing it by the sum of prediction + ground-truth
-# 	# areas - the intersection area
-# 	iou = interArea / float(boxAArea + boxBArea - interArea)
-	
-#     # return the intersection over union value
-# 	return iou, interArea
-
-
-# def compute_area_match(boxes, gt_boxes):
-#     boxes_areas = [(box[2]-box[0])*(box[3]-box[1]) for box in boxes]
-#     gt_areas = [(box[2]-box[0])*(box[3]-box[1]) for box in gt_boxes]
-#     boxes_area = sum(boxes_areas)
-#     gt_area = sum(gt_areas)
-
-#     results = []
-#     for iou in [0.3, 0.5]:
-#         intersection_area = 0
-#         area_in_matches = 0
-#         matches = 0
-#         avg_iou = []
-#         for gt_id, gt in enumerate(gt_boxes):
-#             intersections = [compute_iou(gt, box) for box in boxes]
-#             overlap_iou = [i[0] for i in intersections if i[0] > 0]
-#             overlap_area = [i[1] for i in intersections]
-#             # overlap = np.where(np.array(intersections[0]) > 0.01)[0]
-#             # not_overlap = np.where(np.array(intersections[0]) <= 0.01)[0]
-
-#             intersection_area += sum(overlap_area)
-#             matches += len([i for i in overlap_iou if i > iou])
-#             assert len([i for i in overlap_iou if i > iou]) <= 1
-#             area_in_matches += sum([i[1] for i in intersections if i[0] > iou])
-#             if len(overlap_iou):
-#                 avg_iou.append(sum(overlap_iou)/len(overlap_iou))
-
-#         results.append({
-#             'iou': iou,
-#             'intersection_area': intersection_area,
-#             'matches': matches,
-#             'area_in_matches': area_in_matches,
-#             'avg_iou': 0 if not len(avg_iou) else sum(avg_iou)/len(avg_iou)
-#         })
-
-#     results = {
-#         'gt_area': gt_area,
-#         'boxes_area': boxes_area,
-#         'results': [r for r in results]
-#     }
-
-#     return results
-
-
-def read_virat(fn):
-    annotations = pd.read_csv(fn, header=None, sep=' ', index_col=False)
-    annotations.columns = ['object_id', 'object_duration', 'current_frame', 
-                            'xmin', 'ymin', 'width', 'height', 'object_type']
-
-    annotations = annotations[annotations.object_type > 0]
-    annotations['xmax'] = annotations['xmin'] + annotations['width']
-    annotations['ymax'] = annotations['ymin'] + annotations['height']
-    object_labels = ['person', 'car', 'vehicle', 'object', 'bike']
-    annotations['label'] = annotations['object_type'].apply(lambda obj: object_labels[obj-1])
-    annotations = annotations[annotations.label != 'object']
-    annotations = annotations[annotations.label != 'bike']
-    return annotations
-
-
 if not capture.isOpened():
     print('Unable to open: ' + args.video)
     exit(0)
 
 
-annotations_fn = os.path.join(Path(args.video).parent, '../annotations', Path(args.video).stem + '.viratdata.objects.txt')
-df = read_virat(annotations_fn)
+# annotations_fn = os.path.join(Path(args.video).parent, '../annotations', Path(args.video).stem + '.viratdata.objects.txt')
+# df = read_virat(annotations_fn)
+df = pd.read_csv(os.path.join('annotations', f'{Path(args.video).stem}.no-static.csv'))
+df = df[df['static_object'] == False].copy().reset_index(drop=True)
+frames_with_objects = df['frame_id']
 
 kernel_mog = np.ones((2, 2), np.uint8)
 kernel_mean = np.ones((5, 5), np.uint8)
@@ -196,20 +116,14 @@ columns = ['frame_id', 'num_objects', 'area_objects', 'method', 'proposed_area',
 df_rois = []
 columns_rois = ['frame_id', 'method', 'xmin', 'ymin', 'xmax', 'ymax', 'label']
 
-pbar = tqdm(total=int(total_frames), desc=str(Path(args.video).stem))
-while frame_id < total_frames:
-    pbar.update(1)
-    frame_objs = df[df.current_frame == frame_id][['xmin', 'ymin', 'xmax', 'ymax']].values
-
-    if not len(frame_objs):
-        frame_id += 1
-        continue
-    # frame_objs = merge_overlapping_boxes(frame_objs)
+# pbar = tqdm(total=int(total_frames), desc=str(Path(args.video).stem))
+for frame_id in range(int(total_frames)):
+    # pbar.update(1)
     
     ret, frame = capture.read()
     if not ret:
         break
-    frame = cv.resize(frame, (video_width, video_height))
+    frame = cv.resize(frame, (resize_bg_width, resize_bg_height))
     
     timings = {}
 
@@ -239,9 +153,12 @@ while frame_id < total_frames:
         bg_MOG = backMOG.getBackgroundImage()
         bg_MOG = GaussianBlur(bg_MOG)
     elif frame_id < 250:
-        bg_MOG = bg
+        bg_MOG = bg.copy()
     
-    mask_hybrid = get_mask(bg_MOG, frame, kernel_mean)
+    try:
+        mask_hybrid = get_mask(bg_MOG, frame, kernel_mean)
+    except Exception as e:
+        print(f'frame_id: {frame_id} - video: {Path(args.video).stem}')
     thybrid = time.time() - t0
     acum_hybrid += thybrid
     timings['hybrid'] = thybrid
@@ -256,14 +173,16 @@ while frame_id < total_frames:
             df_rois.append([
                 frame_id,
                 method,
-                box[0]/float(video_width),
-                box[1]/float(video_height),
-                box[2]/float(video_width),
-                box[3]/float(video_height),
+                box[0]/float(resize_bg_width),
+                box[1]/float(resize_bg_height),
+                box[2]/float(resize_bg_width),
+                box[3]/float(resize_bg_height),
             ])
             # assert all([b >= 0 and b <= 1 for b in df_rois[-1][2:]])
 
-    for obj_id, obj in df[df.current_frame == frame_id].iterrows():
+    frame_objs = df[df.frame_id == frame_id][['xmin', 'ymin', 'xmax', 'ymax']].values
+
+    for obj_id, obj in df[df.frame_id == frame_id].iterrows():
         (xmin, ymin, xmax, ymax, label) = obj[['xmin', 'ymin', 'xmax', 'ymax', 'label']].values
         df_rois.append([
             frame_id,
@@ -281,6 +200,7 @@ while frame_id < total_frames:
     for method, boxes in proposed_boxes.items():
         if len(boxes) == 0:
             continue
+
         results_frame[method] = compute_area_match(proposed_boxes[method], frame_objs)
 
     for method, r in results_frame.items():
@@ -299,19 +219,18 @@ while frame_id < total_frames:
                 r_iou['avg_iou_matches'],
                 r_iou['avg_iou_misses'],
                 timings[method]])
-    
-    frame_id += 1
-    if frame_id % 30 == 0:
-        avg_mog = acum_mog / frame_id
-        avg_mean = acum_mean / frame_id
-        avg_hybrid = acum_hybrid / frame_id
 
-    if frame_id % 100 == 0:
-        print(f'avg_mog: {avg_mog*1000:.2f} ms.')
-        print(f'avg_mean: {avg_mean*1000:.2f} ms.')
-        print(f'avg_hybrid: {avg_hybrid*1000:.2f} ms.')
+    # if frame_id % 100 == 0:
+    #     print(f'avg_mog: {avg_mog*1000:.2f} ms.')
+    #     print(f'avg_mean: {avg_mean*1000:.2f} ms.')
+    #     print(f'avg_hybrid: {avg_hybrid*1000:.2f} ms.')
         
     if args.show:
+        if (frame_id+1) % 30 == 0:
+            avg_mog = acum_mog / frame_id
+            avg_mean = acum_mean / frame_id
+            avg_hybrid = acum_hybrid / frame_id
+
         cv.rectangle(frame, (10, 2), (300,90), (255,255,255), -1)
         cv.putText(frame, f'{int(frame_id)}/{int(total_frames)}', (15, 15),
                 cv.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
@@ -337,7 +256,7 @@ while frame_id < total_frames:
             break
 
 df = pd.DataFrame(results, columns=columns)
-df.to_csv(f'{Path(args.video).stem}_perf.csv', index=False, sep=',')
+df.to_csv(f'bgs/{Path(args.video).stem}_perf.csv', index=False, sep=',')
 
 df_rois = pd.DataFrame(df_rois, columns=columns_rois)
-df_rois.to_csv(f'{Path(args.video).stem}_rois.csv', index=False, sep=',')
+df_rois.to_csv(f'bgs/{Path(args.video).stem}_rois.csv', index=False, sep=',')
