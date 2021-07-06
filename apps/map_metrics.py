@@ -9,16 +9,24 @@ import pandas as pd
 
 # import tensorflow as tf
 
+from 
+
 from edge_autotune.motion.motion_detector import non_max_suppression_fast
 from edge_autotune.dnn.metrics import get_precision_recall, evaluate_predictions
 
 PATH = '/home/drivas/Workspace/remote/bscdc-ml02/training/edgeautotuner/apps/'
-VIRAT = '../data_local/virat/VIRAT Ground Dataset'
+
+DATA = '../data'
+if not os.path.isdir(DATA):
+    DATA = '../data_local'
+
+VIRAT = f'{DATA}/virat/VIRAT Ground Dataset'
 
 colors = {
         'FN': (255, 0, 0),
         'TP': (0, 255, 0),
-        'FP': (0, 0, 255)
+        'FP': (0, 0, 255),
+        'GT': (255, 255, 0)
 }
 
 
@@ -48,37 +56,27 @@ def draw_detection(frame, box, label, color=(255,0,0)):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         
 
-def main():
-    parser = argparse.ArgumentParser(description='This program evaluates accuracy of a CNN after using different BGS methods.')
-    parser.add_argument('-v', '--video', type=str, help='Path to a video or a sequence of image.', default=None)
-    # parser.add_argument('--algo', type=str, help='Background subtraction method (KNN, MOG2).', default='mog')
-    # parser.add_argument('--gt', type=str, help='Path to ground-truth.')
-    # parser.add_argument('--bgs', type=str, help='Path to BGS results.')
-    parser.add_argument('--show', default=False, action='store_true', help='Show window with results.')
-    # parser.add_argument('--write', default=False, action='store_true', help='Write results as images.')
-    # parser.add_argument('--model', default=None, help='Path to CNN model.')
-    parser.add_argument('--methods', default=['gt'], nargs='+', help='Method.')
-    parser.add_argument('--classes', default=['person'], nargs='+', help='Valid classes.')
-    parser.add_argument('--start', type=int, default=50, help='Start frame.')
-    # parser.add_argument('--min-score', type=float, default=0.1, help='Minimum score to accept a detection.')
+def generate_metric_fns(dets_path, dets):
+    os.makedirs(dets_path, exist_ok=True)
+    
+    dets['width'] = dets.apply(lambda x: x['xmax'] - x['xmin'], axis=1)
+    dets['height'] = dets.apply(lambda x: x['ymax'] - x['ymin'], axis=1)
+    frames = dets.frame_id.unique()
+    for frame_id in frames:
+        frame_dets = dets[dets.frame_id == frame_id][['label', 'score', 'xmin', 'ymin', 'width', 'height']]
+        frame_dets.to_csv(os.path.join(dets_path, f'{frame_id}.txt'), sep=' ', index=False, header=False)
+        
+    
+def generate_gts(gt_path, gt):
+    os.makedirs(gt_path, exist_ok=True)
+    
+    frames = gt.frame_id.unique()
+    for frame_id in frames:
+        frame_gt = gt[gt.frame_id == frame_id][['label', 'xmin', 'ymin', 'width', 'height']]
+        frame_gt.to_csv(os.path.join(gt_path, f'{frame_id}.txt'), sep=' ', index=False, header=False)        
+        
 
-    args = parser.parse_args()
-
-    if os.path.exists(args.video):
-        video_path = args.video
-    else:
-        video_path = os.path.join(VIRAT, 'videos_original', f'{args.video}.mp4')
-    video_id = Path(video_path).stem
-
-    if args.show:
-        cap = cv2.VideoCapture(video_path)
-
-    dets = pd.read_csv(os.path.join(os.getcwd(), f'{video_id}_detections.csv'))
-    dets = dets[dets.frame_id >= args.start]
-    dets = dets[(dets.xmin < dets.xmax) & (dets.ymin < dets.ymax)]
-    dets = dets[dets.method.isin(args.methods)].copy().reset_index(drop=True)
-    gt = read_virat(video_id)
-
+def custom_method():
     frame = None
     frames = sorted(dets.frame_id.unique())
 
@@ -91,35 +89,18 @@ def main():
     last_frame_decoded = -1
 
     for method in args.methods:
-        print(f'{method}:')
-        print(results[method])
         df_method = dets[(dets.method == method)].copy().reset_index(drop=True)
 
         for frame_id in frames:    
-            # if args.show and last_frame_decoded < frame_id:
-            cap.set(1, frame_id)
-            _, frame = cap.read()
-            # last_frame_decoded = frame_id
+            
+            if args.show:
+                cap.set(1, frame_id)
+                _, frame = cap.read()
+            
 
             df_frame = df_method[df_method.frame_id == frame_id].copy().reset_index(drop=True)
-
-            # boxes = df_frame[['xmin', 'ymin', 'xmax', 'ymax']].values
-            # scores = df_frame['score'].values
-            # labels = df_frame['label'].values
-            # selected_indices = tf.image.non_max_suppression(
-            #                 boxes=boxes, scores=scores, 
-            #                 max_output_size=100,
-            #                 iou_threshold=0.5,
-            #                 score_threshold=0.05)
-                
-            # if len(selected_indices) != len(df_frame):
-            #     print(f'Dropping {len(df_frame)-len(selected_indices)} boxes with')
-            # df_frame = df_frame.iloc[selected_indices].copy().reset_index(drop=True)
-
             gt_frame = gt[gt.frame_id == frame_id].copy().reset_index(drop=True)
-            # for i, box in gt_frame.iterrows():
-            #     draw_detection(frame, box[['xmin', 'ymin', 'xmax', 'ymax']], box['label'], color=(255,0,0))
-
+        
             if not len(df_frame):
                 for c in args.classes:
                     gt_class = gt_frame[gt_frame.label == c].copy().reset_index(drop=True)
@@ -128,41 +109,34 @@ def main():
 
             for c in args.classes:            
                 gt_class = gt_frame[gt_frame.label == c].copy().reset_index(drop=True)
-                # frame_pr = get_precision_recall(df_frame, gt_class, c)
-                # results[method][c]['TP'] += frame_pr[2][0]
-                # results[method][c]['FP'] += frame_pr[2][1]
-                # results[method][c]['FN'] += frame_pr[2][2]
 
                 frame_pr = evaluate_predictions(df_frame, gt_class, c)
                 results[method][c]['TP'] += len(frame_pr['TP'])
                 results[method][c]['FP'] += len(frame_pr['FP'])
                 results[method][c]['FN'] += len(frame_pr['FN'])
 
-                # print(f'\t[{frame_id}] Precision: {frame_pr[0]:.2f} - Recall: {frame_pr[1]:.2f} '
-                #     f'(TP:{frame_pr[2][0]},FP:{frame_pr[2][1]},FN:{frame_pr[2][2]})')
-
                 for m in frame_pr.keys():
                     for box in frame_pr[m]:
-                        print(box)
                         draw_detection(frame, box[['xmin', 'ymin', 'xmax', 'ymax']], c, color=colors[m])
+                    for _, box in gt_class.iterrows():
+                        draw_detection(frame, box[['xmin', 'ymin', 'xmax', 'ymax']], c, color=colors['GT'])
                 
             if args.show:
+                cv2.rectangle(frame, (10, 2), (200,45), (255,255,255), -1)
+                cv2.putText(frame, f'Method: {method}', (15, 15),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
+                cv2.putText(frame, f'Frame: {int(frame_id)}/{max(frames)}', (15, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5 , (0,0,0))
                 cv2.imshow(method, frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     sys.exit(1)
-        
-        # print(results[method])
-        # print(results)
 
-    # print(results)
     df = []
     for method in args.methods:
         # print(method)
         for c in args.classes:
-            # print(f'\t{c}:')
             r = results[method][c]
-            # print(f'\t\t{r}')
             for metric in ['TP','FP','FN']:
                 df.append([
                     method,
@@ -190,8 +164,54 @@ def main():
         
     columns = ['method','label', 'metric', 'value']
     df = pd.DataFrame(df, columns=columns)
-    print(df)
-    df.to_csv(f'{video_id}_map.csv')
+    
+    df.to_csv(f'accuracy/{video_id}_map-{args.model}.csv')
+
+
+def voc_map(dets, gts, methods, output):
+    # Generate ground truth files if do not exist yet
+    if not os.path.exists('/tmp/gts'):
+        generate_gts('/tmp/gts', gts)
+    
+    for method in methods:
+        dets_method = dets[dets['method'] == method]
+        generate_metric_fns(f'/tmp/{method}', dets_method)
+
+    
+
+
+def main():
+    parser = argparse.ArgumentParser(description='This program evaluates accuracy of a CNN after using different BGS methods.')
+    parser.add_argument('-v', '--video', type=str, help='Path to a video or a sequence of image.', default=None)
+    # parser.add_argument('--algo', type=str, help='Background subtraction method (KNN, MOG2).', default='mog')
+    # parser.add_argument('--gt', type=str, help='Path to ground-truth.')
+    # parser.add_argument('--bgs', type=str, help='Path to BGS results.')
+    parser.add_argument('--show', default=False, action='store_true', help='Show window with results.')
+    # parser.add_argument('--write', default=False, action='store_true', help='Write results as images.')
+    parser.add_argument('--model', default=None, help='Path to CNN model.')
+    parser.add_argument('--methods', default=['gt', 'full_frame', 'mog', 'mean', 'hybrid'], nargs='+', help='Method.')
+    parser.add_argument('--classes', default=['person'], nargs='+', help='Valid classes.')
+    parser.add_argument('--start', type=int, default=50, help='Start frame.')
+    # parser.add_argument('--min-score', type=float, default=0.1, help='Minimum score to accept a detection.')
+
+    args = parser.parse_args()
+
+    if os.path.exists(args.video):
+        video_path = args.video
+    else:
+        video_path = os.path.join(VIRAT, 'videos_original', f'{args.video}.mp4')
+    video_id = Path(video_path).stem
+
+    if args.show:
+        cap = cv2.VideoCapture(video_path)
+
+    dets = pd.read_csv(os.path.join(os.getcwd(), f'infer/{video_id}_detections-{args.model}.csv'))
+    dets = dets[dets.frame_id >= args.start]
+    dets = dets[(dets.xmin < dets.xmax) & (dets.ymin < dets.ymax)]
+    dets = dets[dets.method.isin(args.methods)].copy().reset_index(drop=True)
+    gt = pd.read_csv(f'annotations/{video_id}.no-static.csv')
+
+
 
 if __name__ == '__main__':
     main()
