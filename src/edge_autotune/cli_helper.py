@@ -23,7 +23,7 @@ from flask import Flask, request
 from flask_prometheus import monitor
 
 from edge_autotune.api import server, client
-from edge_autotune.dnn import dataset, train, infer
+from edge_autotune.dnn import dataset, infer
 # from edge_autotune.dnn.infer import Model
 from edge_autotune.motion import motion_detector as motion
 from edge_autotune.motion import object_crop as crop
@@ -74,7 +74,7 @@ def _capture(
     min_area: int = 1000,
     timeout: int = 0,
     tmp_dir: str = '/tmp/',
-    first_frame_background: bool = False,
+    # first_frame_background: bool = False,
     flush: bool = True
 ):
     """Capture and annotate images from stream and generate dataset.
@@ -105,7 +105,7 @@ def _capture(
         valid_classes = valid_classes.split(',')
     
     if use_motion:
-        background = motion.Background(no_average=first_frame_background)
+        background = motion.Background()
         motionDetector = motion.MotionDetector(
             background=background,
             min_area_contour=min_area,
@@ -143,7 +143,6 @@ def _capture(
             labels = results[0]['labels']
             print(labels)
             for i in range(min(len(boxes), max_boxes)):
-                print(f'i: {i}')
                 class_id = int(class_ids[i])
                 label = labels[i]
                 score = scores[i]
@@ -195,6 +194,7 @@ def _tune(
         output (str): Path to the output directory.
         train_steps (int, optional): Number of training steps. Defaults to 1000.
     """
+    from edge_autotune.dnn import train
     if not os.path.isfile(f'{checkpoint}.index'):
         raise Exception("Checkpoint not found.")
 

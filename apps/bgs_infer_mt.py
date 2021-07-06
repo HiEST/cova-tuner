@@ -20,7 +20,7 @@ from edge_autotune.dnn import infer, metrics
 from edge_autotune.motion import object_crop as crop
 from edge_autotune.motion.motion_detector import merge_overlapping_boxes, resize_if_smaller
 
-from .constants import QUEUE_SIZE, MODELS, VIRAT
+from constants import QUEUE_SIZE, MODELS, VIRAT
 
 
 colors = {
