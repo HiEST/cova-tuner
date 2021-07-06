@@ -5,6 +5,7 @@
 
 from functools import partial
 import os
+import time
 
 import tensorflow as tf
 
@@ -72,16 +73,47 @@ def load_checkpoint_model(
 
     ckpt.restore(ckpt_to_load).expect_partial()
 
-    def detect_fn(self, batch):
+    def detect_fn(self, batch, verbose=False):
+        t0 = time.time()
         input_tensor = tf.cast(batch, dtype=tf.float32)
+        tcast = time.time() - t0
+        if verbose:
+            print(f'Cast in {tcast:.2f} sec ({1/tcast*len(batch):.2f} fps).')
+        
+        t0 = time.time()
         preprocessed_image, shapes = self.preprocess(input_tensor)
+        tpre = time.time() - t0
+        # print(f'Preprocess in {tpre:.2f} sec ({1/tpre*len(shapes):.2f} fps).')
+
+        t0 = time.time()
         prediction_dict = self.predict(preprocessed_image, shapes)
+        tinfer = time.time() - t0
+        if verbose:
+            print(f'Infer in {tinfer:.2f} sec ({1/tinfer*len(shapes):.2f} fps).')
     
+        t0 = time.time()
         result = self.postprocess(prediction_dict, shapes)
+        tpost0 = time.time() - t0
+        if verbose:
+            print(f'Postprocess0 in {tpost0:.2f} sec ({1/tpost0*len(shapes):.2f} fps).')
+        t0 = time.time()
         result = {key:value.numpy() for key,value in result.items()}
+        tpost1 = time.time() - t0
+        if verbose:
+            print(f'Postprocess1 in {tpost1:.2f} sec ({1/tpost1*len(shapes):.2f} fps).')
+        tpost = tpost0 + tpost1
+        
+        t0 = time.time()
         # +1 to detected classes as we start counting at 1
         for b in range(len(batch)):
             result['detection_classes'][b] += 1
+        tadj = time.time() - t0
+        if verbose:
+            print(f'Adjust in {tadj:.2f} sec ({1/tadj*len(shapes):.2f} fps).')
+
+        total_time = tcast + tpre + tinfer + tpost + tadj
+        if verbose:
+            print(f'Total Infer in {total_time:.2f} sec ({1/total_time*len(shapes):.2f} fps).')
         return result
 
     detection_model.detect = partial(detect_fn, detection_model)

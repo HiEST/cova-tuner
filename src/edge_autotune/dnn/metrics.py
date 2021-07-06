@@ -147,7 +147,7 @@ def compute_area_of_intersect(boxes):
 
 def compute_area_match(boxes, gt_boxes, iou_levels=[0.3, 0.5]):
     boxes_area = sum([(box[2]-box[0])*(box[3]-box[1]) for box in boxes])
-    gt_area = compute_area_of_union(gt_boxes)
+    gt_area = 0 if not len(gt_boxes) else compute_area_of_union(gt_boxes)
     
 
     results = []

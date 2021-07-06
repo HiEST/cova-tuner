@@ -17,7 +17,7 @@ from src.utils.enumerators import (BBFormat, BBType, CoordinatesType,
 
 
 def generate_metric_fns(dets_path, dets):
-    os.makedirs(dets_path, exist_ok=True)
+    os.makedirs(dets_path, exist_ok=False)
     
     dets['width'] = dets.apply(lambda x: x['xmax'] - x['xmin'], axis=1)
     dets['height'] = dets.apply(lambda x: x['ymax'] - x['ymin'], axis=1)
@@ -28,7 +28,7 @@ def generate_metric_fns(dets_path, dets):
         
     
 def generate_gts(gt_path, gt, frames):
-    os.makedirs(gt_path, exist_ok=True)
+    os.makedirs(gt_path, exist_ok=False)
     
     for frame_id in frames:
         frame_gt = gt[gt.frame_id == frame_id][['label', 'xmin', 'ymin', 'width', 'height']]
@@ -63,7 +63,8 @@ def plot_bb_per_classes(dict_bbs_per_class,
 def evaluate_predictions(dets, gts, methods, valid_classes, output):
     # Generate ground truth files if do not exist yet
     dir_gts = f'{output}/gts'
-    frames = dets[dets['method'] == 'full_frame']['frame_id'].unique()
+    frames = dets[dets['method'] == 'gt']['frame_id'].unique()
+    assert len(frames)
     if not os.path.exists(dir_gts):
         generate_gts(dir_gts, gts, frames)
     
@@ -75,7 +76,10 @@ def evaluate_predictions(dets, gts, methods, valid_classes, output):
         type_coordinates=CoordinatesType.ABSOLUTE)
 
     gt_bbs = [bb for bb in gt_bbs if bb.get_class_id() in valid_classes]
-    assert len(gt_bbs)
+    # assert len(gt_bbs)
+    if not len(gt_bbs) and len(gts):
+        print(f"[ERROR] no gt bbs after parsing (before {len(gts)}).")
+        assert False
 
     coco_metrics = ['class', 'AP', 'total positives', 'TP', 'FP']
     coco_detail = pd.DataFrame([], columns=coco_metrics)
@@ -110,23 +114,25 @@ def evaluate_predictions(dets, gts, methods, valid_classes, output):
         if coco_summary is None:
             coco_summary = pd.DataFrame([], columns=coco_res1.keys())
         
-        coco_res1['method'] = method
-        coco_summary = coco_summary.append(coco_res1, ignore_index=True)
+        if coco_res1 is not None:
+            coco_res1['method'] = method
+            coco_summary = coco_summary.append(coco_res1, ignore_index=True)
             
-        for label in coco_res2.keys():
-            coco_values = {k:v for k,v in coco_res2[label].items() if k in coco_metrics}
-            coco_values['method'] = method
+        if coco_res2 is not None:
+            for label in coco_res2.keys():
+                coco_values = {k:v for k,v in coco_res2[label].items() if k in coco_metrics}
+                coco_values['method'] = method
 
-            recall = coco_res2[label]['recall']
-            if recall is not None and len(recall):
-                recall = recall.mean()
-            precision = coco_res2[label]['precision']
-            if precision is not None and len(precision):
-                precision = precision.mean()
-            
-            coco_values['recall'] = recall
-            coco_values['precision'] = precision
-            coco_detail = coco_detail.append(coco_values, ignore_index=True)
+                recall = coco_res2[label]['recall']
+                if recall is not None and len(recall):
+                    recall = recall.mean()
+                precision = coco_res2[label]['precision']
+                if precision is not None and len(precision):
+                    precision = precision.mean()
+                
+                coco_values['recall'] = recall
+                coco_values['precision'] = precision
+                coco_detail = coco_detail.append(coco_values, ignore_index=True)
 
         #############################################################
         # EVALUATE WITH VOC PASCAL METRICS
@@ -164,6 +170,8 @@ def main():
     parser.add_argument('--methods', default=['gt', 'full_frame', 'mog', 'mean', 'hybrid'], nargs='+', help='Method.')
     parser.add_argument('--classes', default=['person'], nargs='+', help='Valid classes.')
     parser.add_argument('--min-score', type=float, default=0.1, help='Minimum score to accept a detection.')
+    parser.add_argument('--compose-n', type=int, default=1, help='Number of frames to compose in a single one.')
+    parser.add_argument('--static', default=False, action='store_true', help='Compute accuracy using only annotations from static objects')
 
     args = parser.parse_args()
 
@@ -173,23 +181,31 @@ def main():
         video_path = video
         video_id = Path(video_path).stem
 
-    detections_fn = os.path.join(os.getcwd(), f'infer/{video_id}_detections-{args.model}.csv')
-    accuracy_fn = os.path.join(os.getcwd(), f'accuracy/{video_id}-{args.model}-coco_summary.csv')
+    # compose_n = "" if args.compose_n == 1 else f"-compose_{args.compose_n}"
+    compose_n = f"-compose_{args.compose_n}"
+    exp_id = f'{video_id}-{args.model}{compose_n}'
+    print(f'exp id: {exp_id}')
+    detections_fn = os.path.join(os.getcwd(), f'infer/{video_id}_detections-{args.model}{compose_n}.csv')
+    accuracy_fn = os.path.join(os.getcwd(), f'accuracy/{exp_id}-coco_summary.csv')
     if os.path.exists(accuracy_fn):
         print(f'[ERROR] {video_id} has already been processed.')
         sys.exit()
     
     dets = pd.read_csv(detections_fn)
     dets = dets[dets.frame_id >= args.skip]
+    dets = dets[dets.method.isin(args.methods + ['gt'])]
+    methods = dets.method.unique()
     assert not len(dets[(dets.xmin >= dets.xmax) | (dets.ymin >= dets.ymax)])
-    dets = dets[(dets.method.isin(args.methods)) & (dets.score >= args.min_score)].copy().reset_index(drop=True)
+    dets = dets[(dets.method.isin(args.methods + ['gt'])) & (dets.score >= args.min_score)].copy().reset_index(drop=True)
+    
     gt = pd.read_csv(f'annotations/{video_id}.no-static.csv')
-    gt = gt[gt['static_object'] == False].copy().reset_index(drop=True)
+    if args.static:
+        gt = gt[gt['static_object'] == False].copy().reset_index(drop=True)
 
-    coco_summary, coco_metrics, voc = evaluate_predictions(dets, gt, args.methods, args.classes, output=f'/tmp/metrics/{video_id}')
-    coco_summary.to_csv(f'accuracy/{video_id}-{args.model}-coco_summary.csv', sep=',', index=True)
-    coco_metrics.to_csv(f'accuracy/{video_id}-{args.model}-coco_metrics.csv', sep=',', index=True)
-    voc.to_csv(f'accuracy/{video_id}-{args.model}-voc.csv', sep=',', index=True)
+    coco_summary, coco_metrics, voc = evaluate_predictions(dets, gt, methods, args.classes, output=f'/tmp/metrics/{exp_id}')
+    coco_summary.to_csv(f'accuracy/{exp_id}-coco_summary.csv', sep=',', index=True)
+    coco_metrics.to_csv(f'accuracy/{exp_id}-coco_metrics.csv', sep=',', index=True)
+    voc.to_csv(f'accuracy/{exp_id}-voc.csv', sep=',', index=True)
 
 
 if __name__ == '__main__':

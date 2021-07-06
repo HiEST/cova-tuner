@@ -11,7 +11,7 @@ import math
 import cv2
 import numpy as np
 
-from edge_autotune.motion.motion_detector import resize_if_smaller
+from edge_autotune.motion.motion_detector import resize_if_smaller, merge_overlapping_boxes
 
 # from rectpack import newPacker
 
@@ -303,29 +303,40 @@ def combine_border(frames: list, box_lists: list, border_size: int = 10, min_com
             objects.append(MovingObject(stream_id, 0, len(objects), box, [], border))
 
     objects, img_shape = combine_boxes(objects)
-    # resize_x = 1 if min_combined_size is None else max(1, min_combined_size[0]/img_shape[0], img_shape[0]/img_shape[1])
-    # resize_y = 1 if min_combined_size is None else max(1, min_combined_size[1]/img_shape[1], img_shape[1]/img_shape[0])
+    # img_size = [img_shape[1], img_shape[0]]
+    # resize_x = 1 if min_combined_size is None else max(1, min_combined_size[0]/img_size[0])
+    # resize_y = 1 if min_combined_size is None else max(1, min_combined_size[1]/img_size[1])
 
-    # new_size = [resize_x*img_shape[0], resize_y*img_shape[1]]
+    # new_size = [resize_x*img_size[0], resize_y*img_size[1]]
+    # # print(f'first new size: {new_size} ({resize_x} & {resize_y})')
     # if new_size[0] < new_size[1]:
-    #     resize_x = new_size[1] / img_shape[0]
+    #     resize_x = new_size[1] / img_size[0]
     # elif new_size[1] < new_size[0]:
-    #     resize_y = new_size[0] / img_shape[1]
+    #     resize_y = new_size[0] / img_size[1]
 
     # if resize_x > 1 or resize_y > 1:
-    #     new_size = [int(resize_x*img_shape[0]), int(resize_y*img_shape[1])]
+    #     new_size = [int(resize_x*img_size[0]), int(resize_y*img_size[1])]
     #     # TODO: Check if new boxes overlap between them. If so, merge them.
-    #     for obj in objects:
-    #         box = obj.box
-    #         new_w = int((box[2]-box[0])*resize_x)
-    #         new_h = int((box[3]-box[1])*resize_y)
-    #         box = resize_if_smaller(box, max_dims=max_dims, min_size=(new_w, new_h))
-    #         obj.box = box
-    #         obj.inf_box = []
+        
+    #     for stream_id in range(len(frames)):
+    #         boxes = box_lists[stream_id]
+    #         new_boxes = []
+    #         for box in boxes:
+    #             new_w = int((box[2]-box[0])*resize_x)
+    #             new_h = int((box[3]-box[1])*resize_y)
+    #             box = resize_if_smaller(box, max_dims=max_dims, min_size=(new_w, new_h))
+    #             new_boxes.append(box)
 
-    #     print(f'Resizing objects by {resize_x:.2f}, {resize_y:.2f} to ({new_size[0]}x{new_size[1]})')
+    #         new_boxes = merge_overlapping_boxes(new_boxes)
+
+    #         for box in new_boxes:
+    #             border = [border_size]*4
+    #             objects.append(MovingObject(stream_id, 0, len(objects), box, [], border))
+                
+    #     # print(f'Min combined size: {min_combined_size}')
+    #     # print(f'Resizing objects by {resize_x:.2f}, {resize_y:.2f}. From ({img_size}) to ({new_size})')
     #     objects, img_shape = combine_boxes(objects)
-    #     print(f'\tGot: {img_shape}')
+    #     # print(f'\tGot: {img_shape[1]}, {img_shape[0]}')
     #         # obj.inf_box = [
     #         #     int(obj.inf_box[0]*resize_x),
     #         #     int(obj.inf_box[1]*resize_y),

@@ -20,63 +20,7 @@ from edge_autotune.dnn import infer, metrics
 from edge_autotune.motion import object_crop as crop
 from edge_autotune.motion.motion_detector import merge_overlapping_boxes, resize_if_smaller
 
-QUEUE_SIZE = 1
-
-DATA = '../data'
-if not os.path.isdir(DATA):
-    DATA = '../data_local'
-
-VIRAT = f'{DATA}/virat/VIRAT Ground Dataset'
-
-
-MODELS_ROOT = '../models/'
-MODELS = {
-    'ssd_mobilenet': {
-        'path': '{}ssd_mobilenet/checkpoint'.format(MODELS_ROOT),
-        'input': (300, 300),
-        'serialize': False,
-    },
-    'ssd_test': {
-        'path': '{}ssd_mobilenet/checkpoint'.format(MODELS_ROOT),
-        'input': (300, 300),
-        'serialize': False,
-    },
-    'ssd_mobilenet_fpn_640': {
-        'path': '{}ssd_mobilenet_fpn_640/checkpoint'.format(MODELS_ROOT),
-        'input': (640, 640),
-        'serialize': False,
-    },
-    'ssd_mobilenet_fpnlite_320': {
-        'path': '{}ssd_mobilenet_fpnlite_320/checkpoint'.format(MODELS_ROOT),
-        'input': (300, 300),
-        'serialize': False,
-    },
-    'ssd_mobilenet_fpnlite_640': {
-        'path': '{}ssd_mobilenet_fpnlite_640/checkpoint'.format(MODELS_ROOT),
-        'input': (640, 640),
-        'serialize': False,
-    },
-    'efficientdet_d0': {
-        'path': '{}efficientdet_d0/checkpoint'.format(MODELS_ROOT),
-        'input': (512, 512),
-        'serialize': True,
-    },
-    'efficientdet_d7': {
-        'path': '{}efficientdet_d7/checkpoint'.format(MODELS_ROOT),
-        'input': (1536, 1536),
-        'serialize': True,
-    },
-    'faster_rcnn_inception_resnet': {
-        'path': '{}faster_rcnn_inception_resnet/checkpoint'.format(MODELS_ROOT),
-        'input': (1024, 1024),
-        'serialize': True,
-    },
-    'faster_rcnn_resnet50': {
-        'path': '{}faster_rcnn_resnet50/checkpoint'.format(MODELS_ROOT),
-        'input': (640, 640),
-        'serialize': False,
-    }
-}
+from .constants import QUEUE_SIZE, MODELS, VIRAT
 
 
 colors = {
@@ -104,10 +48,14 @@ def decode_async(q_output, q_visual, cap, frames_with_objects):
         q_output.put([frame_id, frame, frame_rgb])
         # q_visual.put([frame_id, frame])
 
+    print(f'[DECODE] Done')
     q_output.put([-1, None, None])
 
 
-def compose_async(q_input, q_output, bgs, input_size, min_roi=(32,32)):
+def compose_async(q_input, q_output, bgs, methods, input_size, compose_batch_size=1, min_roi=(32,32)):
+    full_frame_infer = 'full_frame' in methods
+    assert not full_frame_infer or compose_batch_size == 1
+
     frame_id, frame, frame_rgb = q_input.get()
     if frame.shape[0] == 1080:
         bgs.update(bgs.loc[(bgs['method'] == 'gt'), 'xmin'].apply(lambda x: (x*1280)/1920))
@@ -118,32 +66,58 @@ def compose_async(q_input, q_output, bgs, input_size, min_roi=(32,32)):
         assert not any([len(bgs[bgs[coord] > 1.1]) for coord in ['xmin', 'xmax', 'ymin', 'ymax']])
 
     while frame_id >= 0:
-        video_height, video_width, _ = frame.shape
-        composed_frames = [cv2.resize(frame.copy(), tuple(input_size))]
-        composed_frames_rgb = [cv2.resize(frame_rgb.copy(), tuple(input_size))]
-        cf2method = ['full_frame']
-        object_lists = [None]
-        object_maps = [None]
+        batch_frame_ids = [frame_id]
+        batch_frames = [frame]
+        
+        while len(batch_frames) < compose_batch_size:
+            frame_id, frame, frame_rgb = q_input.get()
+            if frame_id < 0:
+                break
 
-        for method in ['gt', 'mog', 'mean', 'hybrid']:
-            regions_proposed = bgs[(bgs.frame_id == frame_id) & (bgs.method == method)][['xmin', 'ymin', 'xmax', 'ymax']].values
-            if not len(regions_proposed):
+            batch_frame_ids.append(frame_id)
+            batch_frames.append(frame)
+
+        # FIXME: All frames in batch must have same shape
+        video_height, video_width, _ = batch_frames[0].shape
+        
+        composed_frames = []
+        composed_frames_rgb = []
+        cf2method = []
+        object_lists = []
+        object_maps = []
+
+        if full_frame_infer:
+            composed_frames = [cv2.resize(frame.copy(), tuple(input_size))]
+            composed_frames_rgb = [cv2.resize(frame_rgb.copy(), tuple(input_size))]
+            cf2method = ['full_frame']
+            object_lists = [None]
+            object_maps = [None]
+
+        for method in methods:
+            regions_per_frame = []
+            total_rois_proposed = 0
+            for frame_in_batch_id in batch_frame_ids:
+                regions_proposed = bgs[(bgs.frame_id == frame_in_batch_id) & (bgs.method == method)][['xmin', 'ymin', 'xmax', 'ymax']].values
+
+                rois_proposed = []
+                for roi in regions_proposed:
+                    if any([r>1.1 or r<0 for r in roi]):
+                        print(roi)
+                        import pdb; pdb.set_trace()
+                    xmin = int(roi[0]*video_width)
+                    ymin = int(roi[1]*video_height)
+                    xmax = min(int(roi[2]*video_width), video_width)
+                    ymax = min(int(roi[3]*video_height), video_height)
+                    box = [xmin, ymin, xmax, ymax]
+                    box = resize_if_smaller(box, max_dims=(video_width, video_height), min_size=min_roi)
+                    rois_proposed.append(box)
+
+                rois_proposed = merge_overlapping_boxes(rois_proposed)
+                regions_per_frame.append(rois_proposed)
+                total_rois_proposed += len(rois_proposed)
+
+            if not total_rois_proposed:
                 continue
-
-            rois_proposed = []
-            for roi in regions_proposed:
-                if any([r>1.1 or r<0 for r in roi]):
-                    print(roi)
-                    import pdb; pdb.set_trace()
-                xmin = int(roi[0]*video_width)
-                ymin = int(roi[1]*video_height)
-                xmax = min(int(roi[2]*video_width), video_width)
-                ymax = min(int(roi[3]*video_height), video_height)
-                box = [xmin, ymin, xmax, ymax]
-                box = resize_if_smaller(box, max_dims=(video_width, video_height), min_size=min_roi)
-                rois_proposed.append(box)
-
-            rois_proposed = merge_overlapping_boxes(rois_proposed)
             
             # # FIXME: Not sure whether this is necessary
             # combined_width = sum(roi[2]-roi[0] for roi in rois_proposed)
@@ -182,41 +156,50 @@ def compose_async(q_input, q_output, bgs, input_size, min_roi=(32,32)):
             object_map = None
             objects = []
 
-            composed_frame, object_map, objects = crop.combine_border([frame], [rois_proposed], 
+            composed_frame, object_map, objects = crop.combine_border(batch_frames, regions_per_frame, 
                                                         border_size = 5, min_combined_size=input_size,
                                                         max_dims=(video_width, video_height))
 
-            composed_frame_rgb, _, _ = crop.combine_border([frame_rgb], [rois_proposed],
+            composed_frame_rgb, _, _ = crop.combine_border(batch_frames, regions_per_frame,
                                                         border_size = 5, min_combined_size=input_size,
                                                         max_dims=(video_width, video_height))
             
+            assert composed_frame.shape[0] > 0 and composed_frame.shape[1] > 0
             composed_frames.append(cv2.resize(composed_frame, input_size).astype('uint8'))
             composed_frames_rgb.append(cv2.resize(composed_frame_rgb, input_size).astype('uint8'))
             object_maps.append(object_map)
             object_lists.append(objects)
             cf2method.append(method)
 
-        q_output.put([frame_id, frame, [composed_frames, composed_frames_rgb, object_maps, object_lists, cf2method]])
+
+        q_output.put([
+            batch_frame_ids, batch_frames,
+            [composed_frames, composed_frames_rgb, object_maps, object_lists, cf2method]])
+
+        if frame_id < 0:
+            break
+
         frame_id, frame, frame_rgb = q_input.get()
 
-    q_output.put([-1, None, [None]*5])
+    print(f'[COMPOSE] Done')
+    q_output.put([[-1], [None], [None]*5])
 
 
 def infer_async(q_input, q_output, model, batch_size=1, serialize=False):
-    frame_id, frame, composed_data = q_input.get()
+    frame_ids, frames, composed_data = q_input.get()
 
-    while frame_id >= 0:
+    while frame_ids[0] >= 0:
         batch_frames = composed_data[1]
-        batch_data = [[frame_id, frame, composed_data]]
+        batch_data = [[frame_ids, frames, composed_data]]
         for i in range(batch_size-1):    
             assert False
-            frame_id, frame, composed_data = q_input.get()
-            if frame_id < 0:
+            frame_ids, frame, composed_data = q_input.get()
+            if frame_ids[0] < 0:
                 batch_size = i
                 break
                 
             batch_frames.extend(composed_data[1])
-            batch_data.append([frame_id, frame, composed_data])
+            batch_data.append([frame_ids, frames, composed_data])
 
         ts0_infer = time.time()
         if serialize:
@@ -243,10 +226,11 @@ def infer_async(q_input, q_output, model, batch_size=1, serialize=False):
             q_output.put(batch_results)
             start_frame = end_frame
         
-        if frame_id >= 0:
-            frame_id, frame, composed_data = q_input.get()
+        if frame_ids[0] >= 0:
+            frame_ids, frames, composed_data = q_input.get()
 
-    q_output.put([-1, None, [None], [None]]) # , timeout=60)
+    print(f'[INFER] Done')
+    q_output.put([[-1], [None], [None], [None]]) # , timeout=60)
 
 
 def prediction_to_object(predicted, objects, object_map=None):
@@ -282,11 +266,10 @@ def prediction_to_object(predicted, objects, object_map=None):
     return obj
     
 
-
 def translate_to_frame_coordinates(predicted, object_map, objects, frame_size):
     obj = prediction_to_object(predicted, objects, object_map=object_map)
     if obj is None:
-        return None, 0
+        return None, 0, None
 
     # Translate to coordinates in original frame from the camera
     # roi is in camera frame coordinates  
@@ -344,7 +327,7 @@ def translate_to_frame_coordinates(predicted, object_map, objects, frame_size):
         assert predicted_in_frame[2] <= roi_in_frame[2]
         assert predicted_in_frame[3] <= roi_in_frame[3]
     except Exception as e:
-        return None, 0
+        return None, 0, None
 
 
      # if new box does not intersect enough with the original detection, skip it
@@ -364,16 +347,16 @@ def translate_to_frame_coordinates(predicted, object_map, objects, frame_size):
         import pdb; pdb.set_trace()
         print(e)
 
-    if iou < 0.5:
-        return None, iou
+    # if iou < 0.5:
+    #     return None, iou, obj
  
-    return predicted_in_frame, iou
+    return predicted_in_frame, iou, obj
     
 
 def recompose_async(q_input, q_output, valid_classes=None, min_score=0.1, max_boxes=100):
-    frame_id, frame, composed_data, infer_results = q_input.get()
+    frame_ids, frames, composed_data, infer_results = q_input.get()
     
-    while frame_id >= 0:
+    while frame_ids[0] >= 0:
         composed_frames, composed_frames_rgb, object_maps, object_lists, cf2method = composed_data
         detection_results = []
         for method_id, method in enumerate(cf2method):
@@ -383,8 +366,6 @@ def recompose_async(q_input, q_output, valid_classes=None, min_score=0.1, max_bo
             boxes = infer_results[method_id]['boxes']
             scores = infer_results[method_id]['scores']
             labels = infer_results[method_id]['labels']
-
-            # draw_top5(frame_bgr, labels, scores, method, color=colors[method], pos=method_id)
 
             for i in range(min(len(boxes), max_boxes)):
                 label = labels[i]
@@ -404,13 +385,14 @@ def recompose_async(q_input, q_output, valid_classes=None, min_score=0.1, max_bo
                 
                 if method == 'full_frame':
                     (left, right, top, bottom) = (
-                                                int(xmin * frame.shape[1]), int(xmax * frame.shape[1]),
-                                                int(ymin * frame.shape[0]), int(ymax * frame.shape[0]))
+                                                int(xmin * frames[0].shape[1]), int(xmax * frames[0].shape[1]),
+                                                int(ymin * frames[0].shape[0]), int(ymax * frames[0].shape[0]))
 
                     detection_results.append([
-                        frame_id, method, label, score,
+                        frame_ids[0], method, label, score,
                         left, top, right, bottom,
                         infer_left, infer_top, infer_right, infer_bottom,
+                        1, # iou_roi
                     ])
 
                     continue
@@ -422,32 +404,39 @@ def recompose_async(q_input, q_output, valid_classes=None, min_score=0.1, max_bo
                     int(ymax*object_map.shape[0]),
                 ]
 
+                # FIXME: All frames must have the same shape
                 try:
-                    obj_in_frame, iou = translate_to_frame_coordinates(predicted_box, object_map, objects, (frame.shape[1], frame.shape[0]))
+                    pred_in_frame, iou, obj = translate_to_frame_coordinates(
+                        predicted_box, object_map, objects, (frames[0].shape[1], frames[0].shape[0]))
                 except Exception as e:
                     exc_type, exc_obj, exc_tb = sys.exc_info()
                     fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
                     print(exc_type, fname, exc_tb.tb_lineno)
-                    import pdb; pdb.set_trace()
-                if obj_in_frame is None:
+                    assert False
+                if pred_in_frame is None:
                     continue
                                             
-                if any([c < 0 for c in obj_in_frame]) or \
-                    obj_in_frame[2] > frame.shape[1] or \
-                    obj_in_frame[3] > frame.shape[0]:
-                    import pdb; pdb.set_trace()
+                if any([c < 0 for c in pred_in_frame]) or \
+                    pred_in_frame[2] > frames[0].shape[1] or \
+                    pred_in_frame[3] > frames[0].shape[0]:
+                    assert False
 
-                (left, top, right, bottom) = obj_in_frame
-                
+                (left, top, right, bottom) = pred_in_frame
+                pred_frame_id = frame_ids[obj.cam_id]
+
+                print(f'Recomposing frame {pred_frame_id} ({frame_ids} take {obj.cam_id})')
+
                 detection_results.append([
-                    frame_id, method, label, score,
+                    pred_frame_id, method, label, score,
                     left, top, right, bottom,
                     infer_left, infer_top, infer_right, infer_bottom,
+                    iou,
                 ])
 
         q_output.put(detection_results)
-        frame_id, frame, composed_data, infer_results = q_input.get()
+        frame_ids, frames, composed_data, infer_results = q_input.get()
 
+    print(f'[RECOMP] Done')
     q_output.put(None)
 
 
@@ -477,24 +466,27 @@ def draw_detection(frame, box, label, score, color=(255,0,0)):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
 
-def draw_top5(frame, labels, scores, method, color=(255,0,0), pos=0):
-    if len(labels) < 5:
-        print(labels)
+def draw_top5(frame, labels, scores, method, boxes=None, color=(255,0,0), pos=0):
+    if not len(labels):
         return
+    draw_n = min(5, len(labels))
     # Draw gray box where detections will be printed
     height, width, _ = frame.shape
     x1, y1 = (width - 200 * (pos+1), 10)
-    x2, y2 = (width - 200 * pos, 10+15*7)
+    x2, y2 = (width - 200 * pos, 10+15*(draw_n+2))
     cv2.rectangle(frame, (x1, y1), (x2, y2), (250, 250, 250), -1)
     cv2.putText(frame, method, (x1+10, y1+10),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-    for i in range(5):
+    for i in range(draw_n):
         label = labels[i]
         score = scores[i]
 
         cv2.putText(frame, f'{label} ({int(score*100)}%)', (x1+10, y1+10+15*(i+1)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+        if boxes is not None:
+            draw_detection(frame, boxes[i], label, score, color=color)
 
 
 def main():
@@ -509,6 +501,8 @@ def main():
     parser.add_argument('--min-score', type=float, default=0.1, help='Minimum score to accept a detection.')
     # parser.add_argument('--input', default=(300,300), nargs='+', type=int, help='Models input size.')
     parser.add_argument('--serialize', default=False, action='store_true', help='Serialize inferences.')
+    parser.add_argument('--methods', default=['gt', 'full_frame', 'mog', 'mean', 'hybrid'], nargs='+', help='Method.')
+    parser.add_argument('--compose-n', type=int, default=1, help='Number of frames to compose in a single one.')
     
     args = parser.parse_args()
 
@@ -536,9 +530,13 @@ def main():
     columns = [
         'frame_id', 'method', 'label', 'score', 
         'xmin', 'ymin', 'xmax', 'ymax',
-        'roi_xmin', 'roi_ymin', 'roi_xmax', 'roi_ymax']
+        'roi_xmin', 'roi_ymin', 'roi_xmax', 'roi_ymax', 'iou_roi']
 
-    bgs = pd.read_csv(os.path.join(os.getcwd(), 'bgs', f'{video_id}_rois.csv'))
+    if args.methods == ['gt']:
+        bgs = pd.read_csv(os.path.join(os.getcwd(), 'gt', f'{video_id}_rois.csv'))
+    else:
+        bgs = pd.read_csv(os.path.join(os.getcwd(), 'bs', f'{video_id}_rois.csv'))
+    bgs = bgs[bgs['method'].isin(args.methods)].copy().reset_index(drop=True)
     frames_with_objects = sorted(bgs[bgs.method == 'gt']['frame_id'].unique())
 
     q_frames = Queue(maxsize=QUEUE_SIZE)
@@ -556,34 +554,65 @@ def main():
 
     serialize = True if args.serialize else MODELS[args.model]['serialize']
 
-    decoder_thread = Thread(target=decode_async, args=(q_frames, q_visual, cap, frames_with_objects), daemon=True)
-    composer_thread = Thread(target=compose_async, args=(q_frames, q_composed, bgs, MODELS[args.model]['input']), daemon=True)
-    infer_thread = Thread(target=infer_async, args=(q_composed, q_preds, model, 1, serialize), daemon=True)
-    recomposer_thread = Thread(target=recompose_async, args=(q_preds, q_results, valid_classes, args.min_score), daemon=True)
+    decoder_thread = Thread(
+        target=decode_async,
+        args=(q_frames, q_visual, cap, frames_with_objects),
+        daemon=True)
+    composer_thread = Thread(
+        target=compose_async,
+        args=(q_frames, q_composed, bgs, args.methods, MODELS[args.model]['input'], args.compose_n),
+        daemon=True)
+    infer_thread = Thread(
+        target=infer_async,
+        args=(q_composed, q_preds, model, 1, serialize),
+        daemon=True)
+    recomposer_thread = Thread(
+        target=recompose_async,
+        args=(q_preds, q_results, valid_classes, args.min_score),
+        daemon=True)
     decoder_thread.start()
     composer_thread.start()
     infer_thread.start()
     recomposer_thread.start()
     
+    if args.show:
+        current_frame = 0
+        cap = cv2.VideoCapture(video)
+
     t0 = time.time()
     results = q_results.get()
     while results is not None:
         detection_results.extend(results)
         results = q_results.get()
 
-    # print(f'[MAIN] Finished. Just received None')
-
         # if args.write:
         #     cv2.imwrite(os.path.join(os.getcwd(), 'results', f'{Path(args.video).stem}_{frame_id}_{method}.png'), composed_frame)
         
-        # if args.show:
-        #     cv2.imshow(method, composed_frame)
-        #     if method != 'full_frame':
-        #         cv2.setWindowTitle(method, f'{method} ({object_map.shape[1]}x{object_map.shape[0]})')
-        #     cv2.imshow('Full Frame', frame_bgr)
-        #     key = cv2.waitKey(1) & 0xFF
-        #     if key == ord("q"):
-        #         sys.exit(1)
+        if args.show and results is not None:
+            
+            dets = pd.DataFrame(results, columns=columns)
+            
+            for frame_id in dets['frame_id'].unique():
+                if frame_id != current_frame:
+                    cap.set(1, frame_id)
+                    current_frame = frame_id
+
+                frame_dets = dets[dets['frame_id'] == frame_id]
+                ret, frame = cap.read()
+                
+                for method_id, method in enumerate(frame_dets['method'].unique()):
+                    method_dets = frame_dets[frame_dets['method'] == method]
+                    labels = method_dets['label'].values
+                    scores = method_dets['score'].values
+                    boxes = method_dets[['xmin', 'ymin', 'xmax', 'ymax']].values
+                    draw_top5(
+                        frame=frame, labels=labels, scores=scores,
+                        boxes=boxes, method=method, color=colors[method], pos=method_id)
+
+                cv2.imshow('Frame', frame) 
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    sys.exit(1)
 
     t1 = time.time()
     print(f'Finished in {t1-t0:.2f} sec ({1/(t1-t0)*len(detection_results):.2f} fps).')
@@ -591,7 +620,7 @@ def main():
     detection_results = pd.DataFrame(detection_results, columns=columns)
     detection_results['model'] = args.model
     detection_results['video'] = video_id
-    detection_results.to_csv(f'infer/{video_id}_detections-{args.model}.csv', index=False, sep=',')
+    detection_results.to_csv(f'infer/{video_id}_detections-{args.model}-compose_{args.compose_n}.csv', index=False, sep=',')
 
 if __name__ == '__main__':
     main()
