@@ -22,7 +22,8 @@ from threading import Thread
 from flask import Flask, request
 from flask_prometheus import monitor
 
-from edge_autotune.api import server, client
+from edge_autotune.api import server
+from edge_autotune.api.client import EdgeClient, AWSClient
 from edge_autotune.dnn import dataset, infer
 # from edge_autotune.dnn.infer import Model
 from edge_autotune.motion import motion_detector as motion
@@ -60,6 +61,107 @@ def _server(
     server.start_server(model, model_id, port)
 
 
+def _capture_aws(
+    stream: str,
+    bucket: str,
+    key_prefix: str,
+    valid_classes: str = None,
+    disable_motion: bool = False,
+    crop_motion: bool = False,
+    frame_skip: int = 25,
+    min_score: float = 0.5,
+    max_images: int = 1000,
+    min_images: int = 100,
+    min_area: int = 1000,
+    timeout: int = 0,
+):
+    """Capture and annotate images from stream and generate dataset.
+
+    Args:
+        stream (str): Input stream from which to capture images.
+        valid_classes (str, optional): Comma-separated list of classes to detect. If None, all classes will be considered during annotation. Defaults to None
+        disable_motion (bool, optional): Disable motion detection for the region proposal. Defaults to False.
+        frame_skip (int, optional): Frame skipping value. Defaults to 25.
+        min_score (float, optional): Minimum score to accept groundtruth model's predictions as valid. Defaults to 0.5.
+        max_images (int, optional): Stop when maximum is reached. Defaults to 1000.
+        min_images (int, optional): Prevents timeout to stop execution if the minimum of images has not been reached. Used only if timeout > 0. Defaults to 0.
+        min_area (int, optional): Minimum area for countours to be considered as actual movement. Defaults to 1000.
+        timeout (int, optional): timeout for capture. When reached, capture stops unless there is a minimum of images enforced. Defaults to 0.
+        tmp_dir (str, optional): Path to temporary directory where intermediate results are written. Defaults to '/tmp'.
+        first_frame_background (bool, optional): If True, first frame of the stream is chosen as background and never changed. Defaults to False.
+        flush (bool, optional): If True, new frames and annotations are written to the output TFRecord as soon as received. Defaults to True.
+    """
+    max_boxes = 100
+    use_motion = not disable_motion
+    crop_motion = use_motion and crop_motion
+    background = None
+    motionDetector = None
+    num_selected_images = 0
+
+    if valid_classes:
+        valid_classes = valid_classes.split(',')
+    
+    if use_motion:
+        background = motion.Background()
+        motionDetector = motion.MotionDetector(
+            background=background,
+            min_area_contour=min_area,
+            roi_size=(1, 1))
+
+    print(f'capture: from {stream}')
+
+    client = AWSClient(bucket=bucket, key_prefix=key_prefix)
+
+    cap = cv2.VideoCapture(stream)
+    ret, frame = cap.read()
+    next_frame = 0
+
+    num_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) / frame_skip
+    progress_cap = tqdm.tqdm(range(int(num_frames)), unit=' decoded frames')
+    progress_ann = tqdm.tqdm(range(max_images), desc='Images annotated', unit='saved imgs')
+    while ret:
+        if motionDetector:
+            regions_proposed, areas = motionDetector.detect(frame)
+        else:
+            regions_proposed = [[0, 0, frame.shape[1]-1, frame.shape[0]-1]]
+
+        imgs_to_upload = []
+        if crop_motion:
+            for _, roi in enumerate(regions_proposed):
+                imgs_to_upload.append(np.array(frame[roi[1]:roi[3], roi[0]:roi[2]]))
+            
+        elif use_motion and len(regions_proposed):
+            imgs_to_upload = [frame.copy()]
+            for roi_id, roi in enumerate(regions_proposed):
+                area = areas[roi_id]
+                cv2.rectangle(frame, (int(roi[0]), int(roi[1])), (int(roi[2]), int(roi[3])), (0, 0, 255), 2)
+                cv2.putText(frame, str(area), (int(roi[0]), int(roi[1])-10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+        if len(imgs_to_upload):
+            num_selected_images += 1
+            progress_ann.update(1)
+
+        progress_cap.update(1)
+        if max_images > 0 and num_selected_images >= max_images:
+            break
+
+        if len(imgs_to_upload):
+            cv2.imshow('frame', frame)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("q"):
+            break
+        client.extend(imgs_to_upload)
+
+        next_frame = next_frame + frame_skip
+        cap.set(1, next_frame)
+        ret, frame = cap.read()
+    
+    client.upload_all()
+
+    print(f'Annotated {num_selected_images}/{max_images}')
+
+
 def _capture(
     stream: str,
     output: str,
@@ -75,7 +177,7 @@ def _capture(
     timeout: int = 0,
     tmp_dir: str = '/tmp/',
     # first_frame_background: bool = False,
-    flush: bool = True
+    flush: bool = True,
 ):
     """Capture and annotate images from stream and generate dataset.
 
@@ -113,7 +215,7 @@ def _capture(
 
     print(f'capture: from {stream} to {output}. Connect to {server} (port={port}). Motion? {not disable_motion}')
 
-    edge = client.EdgeClient(server, port)
+    edge = EdgeClient(server, port)
     writer = tf.compat.v1.python_io.TFRecordWriter(output)
 
     cap = cv2.VideoCapture(stream)

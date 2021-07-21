@@ -6,6 +6,7 @@
 import base64
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
+import io
 from itertools import product
 import json
 import os
@@ -18,6 +19,9 @@ import cv2
 import numpy as np
 import pandas as pd
 import requests
+
+from PIL import Image
+import boto3
 
 if (sys.version_info.major == 3 and sys.version_info.minor >= 7):
     Request = namedtuple(
@@ -137,3 +141,55 @@ class EdgeClient:
             for _, req in enumerate(results):
                 self.pending.remove(req)
                 yield req['id'], req['image'], req['results']
+
+
+class AWSClient:
+    """A class with all methods required to upload content to AWS S3.
+
+    EdgeClient provides methods to connect to S3 and SageMaker to
+    store images, annotate them, and trigger training.
+    
+    Attributes:
+        bucket: Bucket name in S3 where captured images are stored.
+        key_prefix: Prefix of the key to store objects in S3 bucket.
+    """
+    def __init__(self, bucket: str, key_prefix: str):
+        """Init AWSClient with bucket name to store captured images."""
+        self.bucket = bucket
+        self.key_prefix = key_prefix
+        if key_prefix[-1] != '/':
+            self.key_prefix = key_prefix + '/'
+
+        self.s3 = boto3.client('s3')
+        self.images_to_upload = []
+
+
+    def upload_image(self, img, filename, encoding='PNG', to_rgb=True):
+        if to_rgb:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+        img_pil = Image.fromarray(img)
+        encoded_img = io.BytesIO()
+        img_pil.save(encoded_img, encoding.upper())
+        encoded_img.seek(0)
+
+        key = self.key_prefix + filename
+        self.s3.upload_fileobj(
+            encoded_img,
+            Bucket=self.bucket,
+            Key=key,
+        )
+
+    
+    def append(self, img):
+        self.images_to_upload.append(img)
+
+    
+    def extend(self, img_list):
+        self.images_to_upload.extend(img_list)
+
+    def upload_all(self):
+        for img_id, img in enumerate(self.images_to_upload):
+            self.upload_image(img, f'{img_id}.png')
+
+        return True

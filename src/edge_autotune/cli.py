@@ -19,7 +19,7 @@ from typing import Tuple
 import click
 
 if not '--help' in click.get_os_args():
-  from edge_autotune.cli_helper import _server, _capture, _tune, _deploy, _deploy_multi_cam
+  from edge_autotune.cli_helper import _server, _capture, _capture_aws, _tune, _deploy, _deploy_multi_cam
 
 
 __all__ = ['main']
@@ -78,6 +78,18 @@ input_stream_list_option = click.option(
   # type=click.Path(exists=True, dir_okay=False, file_okay=True),
 )
 
+input_bucket_option = click.option(
+  '--bucket',
+  help='AWS S3 Bucket Name.',
+  type=str,
+)
+
+input_key_option = click.option(
+  '--key',
+  help='Key prefix for files stored in S3 bucket.',
+  type=str,
+)
+
 input_valid_classes_option = click.option(
   '--classes',
   help='Comma-separated list of classes to detect.',
@@ -88,13 +100,6 @@ input_server_url_option = click.option(
   '--server',
   help='Server\'s url',
   type=str,
-)
-
-input_server_port_option = click.option(
-  '-p', '--port',
-  help='Port to connect to',
-  default=6000,
-  type=int
 )
 
 input_disable_motion_option = click.option(
@@ -140,7 +145,7 @@ input_max_images_option = click.option(
 )
 
 input_min_images_option = click.option(
-  '-p', '--port',
+  '--min-images',
   help='Prevents timeout to stop execution if the minimum of images has not been reached.'
       'Ignored if timeout is 0. Defaults to 0.',
   default=0,
@@ -152,6 +157,52 @@ input_timeout_option = click.option(
   help='Timeout to stop execution even if maximum images has not been reached.',
   default=0,
   type=int,
+)
+
+
+@input_stream_option
+@input_bucket_option
+@input_key_option
+@input_valid_classes_option
+@input_disable_motion_option
+@input_min_score_option
+@input_min_area_option
+@input_max_images_option
+@input_min_images_option
+@input_timeout_option
+@main.command()
+def capture_aws(
+  stream: str,
+  bucket: str,
+  key: str,
+  classes: str = None,
+  disable_motion: bool = False,
+  min_score: float = 0.5,
+  min_area: int = 1000,
+  max_images: int = 1000,
+  min_images: int = 100,
+  timeout: int = 0,
+):
+  """Capture and annotate images from stream and generate dataset."""
+  print(f'capture-aws: from {stream} to s3://{bucket}/{key}.')
+  _capture_aws(
+    stream=stream,
+    bucket=bucket,
+    key_prefix=key,
+    valid_classes=classes,
+    disable_motion=disable_motion,
+    min_score=min_score,
+    max_images=max_images,
+    min_images=min_images,
+    min_area=min_area,
+  )
+
+
+input_server_port_option = click.option(
+  '-p', '--port',
+  help='Port to connect to',
+  default=6000,
+  type=int
 )
 
 
