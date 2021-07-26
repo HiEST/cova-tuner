@@ -17,6 +17,9 @@ class BackgroundMethod(Enum):
     PREVIOUS = 3
     ACUM_MEAN = 4
     ACUM_MEDIAN = 5
+    MOG2 = 6
+    HYBRID = 7
+    KNN = 8
 
 
 class Background:
@@ -38,7 +41,7 @@ class Background:
                 Useful when the current background can be considered optimal.
     """
 
-    def __init__(self, method: BackgroundMethod = BackgroundMethod.AVERAGE, skip: int = 20, take: int = 10, use_last: int = 15):
+    def __init__(self, method: BackgroundMethod = BackgroundMethod.MOG2, skip: int = 20, take: int = 10, use_last: int = 15):
         self.background = None
         self.background_color = None
 
@@ -54,12 +57,39 @@ class Background:
         self.skipped = 0
 
         self.frozen = (method == BackgroundMethod.FIRST)
+        self.background_model = None
+        if method in [BackgroundMethod.MOG2, BackgroundMethod.HYBRID]:
+            self.background_model = cv2.createBackgroundSubtractorMOG2()
+        elif method == BackgroundMethod.KNN:
+            self.background_model = cv2.createBackgroundSubtractorKNN()
+
 
     def update(self, frame: np.array):
         """Update background with new frame
         
         :param frame: 3D numpy array containing a frame
         """
+        if self.background_model is not None:
+            if self.skip > 1:
+                self.skipped += 1
+                if self.skipped < self.skip:
+                    if self.background is None:
+                        self.background = GaussianBlur(frame)
+                        self.background_color = frame.copy()
+                    return self.background
+                self.skipped = 0
+                
+            self.background_model.apply(frame)
+
+            # We avoid computing background image unnecessarily
+            if self.method != BackgroundMethod.HYBRID:
+                return None
+            
+            self.background_color = self.background_model.getBackgroundImage()
+            self.background = GaussianBlur(self.background_color)
+                
+            return background
+
 
         if self.background is None:
             self.background = GaussianBlur(frame)
@@ -158,7 +188,11 @@ class MotionDetector:
         self.merge_rois = merge_rois
         self.delta_threshold = delta_threshold
         self.min_area_contour = min_area_contour
-        self.kernel = np.ones((5, 5), np.uint8)
+
+        if self.background.method in [BackgroundMethod.MOG2, BackgroundMethod.KNN]:
+            self.kernel = np.ones((2, 2), np.uint8)
+        else:
+            self.kernel = np.ones((5, 5), np.uint8)
 
         self.current_gray = None
         self.current_delta = None
@@ -188,16 +222,20 @@ class MotionDetector:
         Returns:
             tuple: Regions where movement is detected [xmin, ymin, xmax, ymax], and the area in pixels of each region.
         """
+
         background = self.background.update(frame)
-        self.current_gray = GaussianBlur(frame)
-        self.current_delta = cv2.absdiff(background, self.current_gray)
-        self.current_threshold = cv2.threshold(
-                                    self.current_delta, 
-                                    self.delta_threshold, 
-                                    255, 
-                                    cv2.THRESH_BINARY)[1]
+        if self.background.method in [BackgroundMethod.MOG2, BackgroundMethod.KNN]:
+            self.current_mask = GaussianBlur(self.background.background_model.getBackgroundImage())
+        else:
+            self.current_gray = GaussianBlur(frame)
+            self.current_delta = cv2.absdiff(background, self.current_gray)
+            self.current_mask = cv2.threshold(
+                                        self.current_delta, 
+                                        self.delta_threshold, 
+                                        255, 
+                                        cv2.THRESH_BINARY)[1]
         
-        self.current_threshold = cv2.dilate(self.current_threshold, self.kernel, iterations=2)
+        self.current_threshold = cv2.dilate(self.current_mask, self.kernel, iterations=2)
         cnts = cv2.findContours(
             self.current_threshold.copy(), 
             cv2.RETR_EXTERNAL,

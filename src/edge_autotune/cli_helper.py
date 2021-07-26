@@ -67,6 +67,7 @@ def _capture_aws(
     key_prefix: str,
     valid_classes: str = None,
     disable_motion: bool = False,
+    background_method: int = 6,
     crop_motion: bool = False,
     frame_skip: int = 25,
     min_score: float = 0.5,
@@ -81,6 +82,7 @@ def _capture_aws(
         stream (str): Input stream from which to capture images.
         valid_classes (str, optional): Comma-separated list of classes to detect. If None, all classes will be considered during annotation. Defaults to None
         disable_motion (bool, optional): Disable motion detection for the region proposal. Defaults to False.
+        background_method (int, optional): Method to generate background image. Defaults to 6 (MOG).
         frame_skip (int, optional): Frame skipping value. Defaults to 25.
         min_score (float, optional): Minimum score to accept groundtruth model's predictions as valid. Defaults to 0.5.
         max_images (int, optional): Stop when maximum is reached. Defaults to 1000.
@@ -102,11 +104,18 @@ def _capture_aws(
         valid_classes = valid_classes.split(',')
     
     if use_motion:
-        background = motion.Background()
-        motionDetector = motion.MotionDetector(
-            background=background,
-            min_area_contour=min_area,
-            roi_size=(1, 1))
+        background_method = motion.BackgroundMethod(background_method)
+        background_skip = 1 if background_method in [motion.BackgroundMethod.MOG2, motion.BackgroundMethod.KNN] else 20
+        if replicate_multi:
+            background = [motion.Background(method=background_method, skip=background_skip)]
+        else:
+            background = [motion.Background(method=background_method, skip=background_skip) for _ in range(num_streams)]
+        motionDetector = [
+            motion.MotionDetector(
+                background=b,
+                min_area_contour=min_area,
+                roi_size=roi_size)
+            for b in background]
 
     print(f'capture: from {stream}')
 
@@ -565,7 +574,8 @@ def _deploy_multi_cam(
     min_area: int = 1000,
     roi_size: Tuple[int,int] = (1,1),
     frame_skip: int = 1,
-    first_frame_background: bool = False,
+    loop_streams: bool = True,
+    background_method: int = 6,
     window_size: Tuple[int, int] = [1280, 720],
     save_to: str = None,
     debug: bool = False,
@@ -583,7 +593,8 @@ def _deploy_multi_cam(
         min_area (int, optional): Minimum area for countours to be considered as actual movement. Defaults to 1000.
         roi_size (Tuple[int,int]):
         frame_skip (int, optional): Number of frames to skip between inferences. Defaults to 25.
-        first_frame_background (bool, optional): If True, first frame of the stream is chosen as background and never changed. Defaults to False.
+        loop_streams (bool, optional): Loop over streams, i.e. whenever a stream reaches the end, it starts all over again. Defaults to True.
+        background_method (int, optional): Method to generate background image. Defaults to 6 (MOG).
         window_size (Tuple[int,int], optional): Size of the window to show stream with detections [width, height]. Defaults to [1280,720]
         save_to (str, option): Record output stream, if set. Path to output video with detection results. Defaults to None.
         debug (bool, option): Show debug information, like current background. Defaults to None.
@@ -595,7 +606,7 @@ def _deploy_multi_cam(
     motionDetector = None
     no_show = not debug
 
-    frame_shift = 100
+    frame_shift = 0
 
     if valid_classes:
         valid_classes = valid_classes.split(',')
@@ -619,20 +630,24 @@ def _deploy_multi_cam(
     else:
         cap = [cv2.VideoCapture(v) for v in streams]
     
-    frame_limit = cap[0].get(cv.CAP_PROP_FRAME_COUNT)
+     if loop_streams:
+        frame_limit = np.Inf
+    else:
+        frame_limit = cap[0].get(cv2.CAP_PROP_FRAME_COUNT)
 
     if use_motion:
+        background_method = motion.BackgroundMethod(background_method)
+        background_skip = 1 if background_method in [motion.BackgroundMethod.MOG2, motion.BackgroundMethod.KNN] else 20
         if replicate_multi:
-            background = [motion.Background(method=motion.BackgroundMethod.FIRST)]
+            background = [motion.Background(method=background_method, skip=background_skip)]
         else:
-            background = [motion.Background(method=motion.BackgroundMethod.FIRST) for _ in range(num_streams)]
+            background = [motion.Background(method=background_method, skip=background_skip) for _ in range(num_streams)]
         motionDetector = [
             motion.MotionDetector(
                 background=b,
                 min_area_contour=min_area,
                 roi_size=roi_size)
             for b in background]
-
 
     if frame_shift:
         # Set background using first frame of the first stream
@@ -645,10 +660,12 @@ def _deploy_multi_cam(
 
     processed_frames = 0
     next_frame = 1
-    update_metrics_interval = 100
+    update_metrics_interval = 50
     
     df = [] 
     df_stats = []
+    interval_latencies = []
+    all_latencies = []
     while True:
         if next_frame >= frame_limit:
             break
@@ -681,7 +698,14 @@ def _deploy_multi_cam(
     
         if not all(rets):
             print(f'Reached end of at least one stream [{rets}]')
-            break
+            if not loop_streams:
+                break
+            
+            # Initialize all streams
+            for i,_ in enumerate(rets):
+                cap[i].set(1, 0)
+            next_frame = 1
+            continue
 
         ts0_bg = time.time()
         
@@ -855,6 +879,7 @@ def _deploy_multi_cam(
 
         ts1_frame = time.time()
         total_frame_time = ts1_frame - ts0_frame
+        interval_latencies.append(total_frame_time)
         df_stats.append([
             next_frame,
             total_frame_time,
@@ -868,6 +893,13 @@ def _deploy_multi_cam(
 
         processed_frames += 1
         if processed_frames % update_metrics_interval == 0:
+            # discard first reading
+            if processed_frames > update_metrics_interval:
+                all_latencies.extend(interval_latencies)
+                print(f'interval:{len(interval_latencies)};{np.average(interval_latencies)};{np.median(interval_latencies)};{np.percentile(interval_latencies,95)};{np.max(interval_latencies)}')
+                print(f'acum:{len(all_latencies)};{np.average(all_latencies)};{np.median(all_latencies)};{np.percentile(all_latencies,95)};{np.max(all_latencies)}')
+
+            interval_latencies = []
             metric_bgs_lat.set(total_time_bg)
             metric_dec_lat.set(total_decoding_time)
             metric_inf_lat.set(total_time_infer)

@@ -160,11 +160,20 @@ input_timeout_option = click.option(
 )
 
 
+input_method_option = click.option(
+  '--method',
+  help='Method for generating background image',
+  default=6,
+  type=int,
+)
+
+
 @input_stream_option
 @input_bucket_option
 @input_key_option
 @input_valid_classes_option
 @input_disable_motion_option
+@input_method_option
 @input_min_score_option
 @input_min_area_option
 @input_max_images_option
@@ -177,6 +186,7 @@ def capture_aws(
   key: str,
   classes: str = None,
   disable_motion: bool = False,
+  method: int = 6,
   min_score: float = 0.5,
   min_area: int = 1000,
   max_images: int = 1000,
@@ -191,6 +201,7 @@ def capture_aws(
     key_prefix=key,
     valid_classes=classes,
     disable_motion=disable_motion,
+    background_method=method,
     min_score=min_score,
     max_images=max_images,
     min_images=min_images,
@@ -372,6 +383,12 @@ input_frame_skip_option = click.option(
   type=int,
 )
 
+input_loop_option = click.option(
+  '--loop',
+  help='Loop over streams.',
+  default=False,
+  is_flag=True,
+)
 
 @input_stream_option
 @input_model_option
@@ -424,6 +441,8 @@ def deploy(
 @input_min_area_option
 @input_roi_size_option
 @input_window_size_option
+@input_method_option
+@input_loop_option
 @input_save_to_option
 @input_debug_option
 @input_frame_skip_option
@@ -438,6 +457,8 @@ def deploy_multi_cam(
   min_area: int = 1000,
   roi_size: Tuple[int,int] = (1,1),
   window_size: Tuple[int,int] = [1280,720],
+  method: int = 6,
+  loop: bool = True,
   save_to: str = None,
   debug: bool = False,
   frame_skip: int = 1,
@@ -452,7 +473,8 @@ def deploy_multi_cam(
     disable_motion=disable_motion,
     min_area=min_area,
     roi_size=roi_size,
-    first_frame_background=True,
+    background_method=method,
+    loop_streams=loop,
     window_size=window_size,
     save_to=save_to,
     debug=debug,
