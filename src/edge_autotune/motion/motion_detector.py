@@ -4,6 +4,7 @@
 """This module implements MotionDetetor and Background classes, and auxiliary methods"""
 
 from enum import Enum
+from logging import BASIC_FORMAT
 from typing import Tuple
 
 import cv2
@@ -41,56 +42,104 @@ class Background:
                 Useful when the current background can be considered optimal.
     """
 
-    def __init__(self, method: BackgroundMethod = BackgroundMethod.MOG2, skip: int = 20, take: int = 10, use_last: int = 15):
-        self.background = None
+    def __init__(self, take: int = 10, use_last: int = 15):
+        self.background_blur = None
         self.background_color = None
+        self.mask = None
 
+            
+    def freeze(self):
+        self.frozen = True
+
+
+    def unfreeze(self):
+        self.frozen = False
+
+class BackgroundCV(Background):
+    """This class models the background from a scene using MOG2 """
+    def __init__(self, method=BackgroundMethod.MOG2):
+        if method == BackgroundMethod.MOG2:
+            self.model = cv2.createBackgroundSubtractorMOG2()
+        elif method == BackgroundMethod.KNN:
+            self.model = cv2.createBackgroundSubtractorKNN()
+        else:
+            raise ValueError('Incorrect BGS method for BackgroundCV')
+
+        self.kernel = np.ones((2, 2), np.uint8)
+
+        
+    def update(self, frame):
+            self.background_color = None
+            self.mask = self.model.apply(frame)
+            self.mask = cv2.dilate(self.mask, self.kernel, iterations=2)
+            return self.mask
+
+        
+    def getBackgroundImage(self):
+        if self.background_color is None:
+            self.background_color = self.model.getBackgroundImage()
+            self.background_blur = GaussianBlur(self.background_color)
+        
+        return self.background_blur
+
+class BackgroundHybrid(Background):
+    def __init__(self):
+        self.model = cv2.createBackgroundSubtractorMOG2
+        self.kernel = np.ones((5, 5), np.uint8)
+
+    def update(self, frame):
+        if self.skip > 1:
+            self.skipped += 1
+            if self.skipped < self.skip:
+                if self.background is None:
+                    self.background = GaussianBlur(frame)
+                    self.background_color = frame.copy()
+                    self.background_model.apply(frame)
+                return self.background
+            self.skipped = 0
+            
+        self.background_model.apply(frame)
+
+        # We avoid computing background image unnecessarily
+        if self.method != BackgroundMethod.HYBRID:
+            return None
+        
+        self.background_color = self.background_model.getBackgroundImage()
+        self.background = GaussianBlur(self.background_color)
+
+
+        self.current_gray = GaussianBlur(frame)
+        self.current_delta = cv2.absdiff(background, self.current_gray)
+        self.current_mask = cv2.threshold(
+                                    self.current_delta, 
+                                    self.delta_threshold, 
+                                    255, 
+                                    cv2.THRESH_BINARY)[1]
+    
+        self.current_threshold = cv2.dilate(self.current_mask, self.kernel, iterations=2)
+            
+        return self.current_threshold
+
+
+class BackgroundSimple(Background):
+    def __init__(self, method, take: int = 10, use_last: int = 15):
         self.prev_background = None
         self.method = method
         
-        self.skip = skip
         self.use_last = use_last
         self.take = take
 
         self.last_avgs = []
         self.last_frames = []
-        self.skipped = 0
 
         self.frozen = (method == BackgroundMethod.FIRST)
-        self.background_model = None
-        if method in [BackgroundMethod.MOG2, BackgroundMethod.HYBRID]:
-            self.background_model = cv2.createBackgroundSubtractorMOG2()
-        elif method == BackgroundMethod.KNN:
-            self.background_model = cv2.createBackgroundSubtractorKNN()
-
+        self.kernel = np.ones((5, 5), np.uint8)
 
     def update(self, frame: np.array):
         """Update background with new frame
         
         :param frame: 3D numpy array containing a frame
         """
-        if self.background_model is not None:
-            if self.skip > 1:
-                self.skipped += 1
-                if self.skipped < self.skip:
-                    if self.background is None:
-                        self.background = GaussianBlur(frame)
-                        self.background_color = frame.copy()
-                    return self.background
-                self.skipped = 0
-                
-            self.background_model.apply(frame)
-
-            # We avoid computing background image unnecessarily
-            if self.method != BackgroundMethod.HYBRID:
-                return None
-            
-            self.background_color = self.background_model.getBackgroundImage()
-            self.background = GaussianBlur(self.background_color)
-                
-            return background
-
-
         if self.background is None:
             self.background = GaussianBlur(frame)
             self.background_color = frame.copy()
@@ -156,13 +205,6 @@ class Background:
         
         return self.background
 
-            
-    def freeze(self):
-        self.frozen = True
-
-    def unfreeze(self):
-        self.frozen = False
-
 
 class MotionDetector:
     """
@@ -189,15 +231,6 @@ class MotionDetector:
         self.delta_threshold = delta_threshold
         self.min_area_contour = min_area_contour
 
-        if self.background.method in [BackgroundMethod.MOG2, BackgroundMethod.KNN]:
-            self.kernel = np.ones((2, 2), np.uint8)
-        else:
-            self.kernel = np.ones((5, 5), np.uint8)
-
-        self.current_gray = None
-        self.current_delta = None
-        self.current_threshold = None
-
         self.roi_size = roi_size
 
 
@@ -223,21 +256,15 @@ class MotionDetector:
             tuple: Regions where movement is detected [xmin, ymin, xmax, ymax], and the area in pixels of each region.
         """
 
-        background = self.background.update(frame)
-        if self.background.method in [BackgroundMethod.MOG2, BackgroundMethod.KNN]:
-            self.current_mask = GaussianBlur(self.background.background_model.getBackgroundImage())
-        else:
-            self.current_gray = GaussianBlur(frame)
-            self.current_delta = cv2.absdiff(background, self.current_gray)
-            self.current_mask = cv2.threshold(
-                                        self.current_delta, 
-                                        self.delta_threshold, 
-                                        255, 
-                                        cv2.THRESH_BINARY)[1]
+        frame_mask = self.background.update(frame)
         
-        self.current_threshold = cv2.dilate(self.current_mask, self.kernel, iterations=2)
+        # cv2.imshow('Frame', frame_mask) 
+        # key = cv2.waitKey(1) & 0xFF
+        # if key == ord("q"):
+        #     sys.exit(1)
+        
         cnts = cv2.findContours(
-            self.current_threshold.copy(), 
+            frame_mask.copy(), 
             cv2.RETR_EXTERNAL,
             cv2.CHAIN_APPROX_SIMPLE
         )
