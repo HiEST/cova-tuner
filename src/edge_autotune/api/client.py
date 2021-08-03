@@ -161,6 +161,7 @@ class AWSClient:
             self.key_prefix = key_prefix + '/'
 
         self.s3 = boto3.client('s3')
+        self.next_img_id = 0
         self.images_to_upload = []
 
 
@@ -189,7 +190,8 @@ class AWSClient:
         self.images_to_upload.extend(img_list)
 
     def upload_all(self):
-        for img_id, img in enumerate(self.images_to_upload):
-            self.upload_image(img, f'{img_id}.png')
+        for img in self.images_to_upload:
+            self.upload_image(img, f'{self.next_img_id}.png')
+            self.next_img_id += 1
 
         return True
