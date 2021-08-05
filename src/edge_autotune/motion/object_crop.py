@@ -7,11 +7,13 @@ from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
 import math
+import sys
 
 import cv2
 import numpy as np
 
 from edge_autotune.motion.motion_detector import resize_if_smaller, merge_overlapping_boxes
+from edge_autotune.dnn import metrics
 
 # from rectpack import newPacker
 
@@ -416,3 +418,122 @@ def combine_resize(frames: list, box_lists: list, roi_size: list = (100, 100), b
     objects.sort(key=lambda x: x.obj_id)
     return merged_img, object_map, objects
     
+
+def prediction_to_object(predicted, objects, object_map=None):
+
+    if object_map is None:
+        max_iou = [0, None]
+        for obj in objects:
+            iou, _ = metrics.get_iou(predicted, obj.inf_box)
+        
+            if max_iou[0] < iou:
+                max_iou = [iou, obj]
+        
+        obj = max_iou[1]
+    else:
+        xmin, ymin, xmax, ymax = predicted
+        
+        if not (xmin < xmax and ymin < ymax):
+            return None
+        try:
+            obj_id = int(np.median(object_map[ymin:ymax,xmin:xmax]))
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            print(exc_type, fname, exc_tb.tb_lineno)
+            import pdb; pdb.set_trace()
+            print(e)
+
+        #FIXME: Instead of checking only for 0, check if it is a float number (i.e. check % of one object) 
+        if obj_id == 0:
+            return None
+        obj = objects[obj_id-1]
+
+    return obj
+    
+
+def translate_to_frame_coordinates(predicted, object_map, objects, frame_size):
+    obj = prediction_to_object(predicted, objects, object_map=object_map)
+    if obj is None:
+        return None, 0, None
+
+    # Translate to coordinates in original frame from the camera
+    # roi is in camera frame coordinates  
+    roi_in_frame = obj.box 
+    # inference box is in merged frame coordinates and includes borders
+    roi_in_composed = obj.inf_box
+    roi_in_composed_no_border = [
+        roi_in_composed[0]+obj.border[0],
+        roi_in_composed[1]+obj.border[1],
+        roi_in_composed[2]-obj.border[2],
+        roi_in_composed[3]-obj.border[3],
+    ]
+
+    # Sanity check
+    assert predicted[0] < predicted[2]
+    assert predicted[1] < predicted[3]
+
+    # Remove borders
+    predicted_no_border = [
+        max(predicted[0], roi_in_composed_no_border[0]),
+        max(predicted[1], roi_in_composed_no_border[1]),
+        min(predicted[2], roi_in_composed_no_border[2]),
+        min(predicted[3], roi_in_composed_no_border[3]),
+    ]
+
+    # predicted box wrt RoI's origin
+    predicted_origin_roi = [
+        predicted_no_border[0]-roi_in_composed_no_border[0],
+        predicted_no_border[1]-roi_in_composed_no_border[1],
+        predicted_no_border[2]-roi_in_composed_no_border[0],
+        predicted_no_border[3]-roi_in_composed_no_border[1],
+    ]
+
+    # predicted box wrt to frame coordinates
+    predicted_in_frame = [
+        predicted_origin_roi[0]+roi_in_frame[0],
+        predicted_origin_roi[1]+roi_in_frame[1],
+        predicted_origin_roi[2]+roi_in_frame[0],
+        predicted_origin_roi[3]+roi_in_frame[1],
+    ]
+
+    try:
+        # coordinates are within [0,0] and [frame_width, frame_height]
+        for i in range(4):
+            frame_dim = frame_size[i%2]
+            assert predicted_in_frame[i] >= 0
+            assert predicted_in_frame[i] <= frame_dim
+
+        assert predicted_in_frame[0] < predicted_in_frame[2]
+        assert predicted_in_frame[1] < predicted_in_frame[3]
+
+        # predicted bbox is within roi in frame
+        assert predicted_in_frame[0] >= roi_in_frame[0]
+        assert predicted_in_frame[1] >= roi_in_frame[1]
+        assert predicted_in_frame[2] <= roi_in_frame[2]
+        assert predicted_in_frame[3] <= roi_in_frame[3]
+    except Exception as e:
+        return None, 0, None
+
+
+     # if new box does not intersect enough with the original detection, skip it
+    original_prediction_in_frame = [
+        predicted[0]-obj.inf_box[0]+obj.box[0],
+        predicted[1]-obj.inf_box[1]+obj.box[1],
+        predicted[2]-obj.inf_box[0]+obj.box[0],
+        predicted[3]-obj.inf_box[1]+obj.box[1],
+    ]
+
+    try:
+        iou, _ = metrics.get_iou(original_prediction_in_frame, predicted_in_frame)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        print(exc_type, fname, exc_tb.tb_lineno)
+        import pdb; pdb.set_trace()
+        print(e)
+
+    # if iou < 0.5:
+    #     return None, iou, obj
+ 
+    return predicted_in_frame, iou, obj
