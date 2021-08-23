@@ -1,4 +1,5 @@
 import argparse
+import configparser
 from typing import Tuple
 import os
 import sys
@@ -23,12 +24,53 @@ from sagemaker.debugger import TensorBoardOutputConfig
 from sagemaker.processing import Processor, ProcessingInput, ProcessingOutput
 
 
-
-
 from edge_autotune.api.client import AWSClient
 from edge_autotune.motion import motion_detector as motion
 
 from model_package_arns import ModelPackageArnProvider
+
+
+def load_config(args):
+    config = configparser.ConfigParser(
+        converters={'list': lambda x: [i.strip() for i in x.split(',')]})
+    config.read(args['config'])
+
+    required_fields = {
+        'app': {
+            'streams': 'list',
+            's3_prefix_key': 'str',
+            'dataset_name': 'str',
+            'valid_classes': 'list',
+        },
+        'aws': {
+            'role': 'str',
+        },
+        'ecr': {
+            'tfrecord': 'str',
+            'tftrain': 'str',
+        },
+    }
+    
+    config = {s:dict(config.items(s)) for s in config.sections()}
+    # Merge with config with args, having this higher priority
+    config['app'] = {**config['app'], **args}
+    
+    for field, params in required_fields.items():
+        try:
+            assert config.get(field, None)
+        except Exception as e:
+            print(f'Missing field {field} in config file.')
+            raise e
+        for param, valtype in params.items():
+            try:
+                assert config[field].get(param, None)
+            except Exception as e:
+                print(f"Missing parameter {param} on field {field} in config file")
+                raise e
+            if valtype == 'list' and isinstance(config[field][param], str):
+                config[field][param] = json.loads(config[field].get(param))
+    
+    return config
 
 
 def capture_aws(
@@ -130,7 +172,6 @@ def capture_aws(
         client.upload_all()
 
         print(f'Uploaded {num_selected_images} from stream {Path(stream).stem}')
-
 
 
 ## Auxiliary Functions
@@ -349,7 +390,7 @@ def train(train_input, train_data, eval_data, output_prefix, tensorboard_prefix,
 
     estimator = TensorFlow(
         entry_point='train.py', role=role, 
-        instance_count=1, instance_type='ml.m4.xlarge', 
+        instance_count=1, instance_type='ml.g4dn.xlarge', 
         source_dir='source_dir',
         output_path=output_prefix, image_uri=container,
         hyperparameters=hyperparameters,
@@ -365,62 +406,48 @@ def train(train_input, train_data, eval_data, output_prefix, tensorboard_prefix,
     estimator.fit(inputs)
 
 
-
 def main():
     args = argparse.ArgumentParser()
-    args.add_argument("-s", "--streams-list", nargs='+', default=None, help="List of streams to process")
-    args.add_argument("-k", "--key", default=None, type=str, help="S3 key prefix")
-    args.add_argument("-n", "--dataset-name", default=None, type=str, help="Dataset name")
-    args.add_argument("-c", "--classes", nargs='+', default=None, help="List of valid classes")
+    args.add_argument("--streams", nargs='+', default=None, help="List of streams to process")
+    args.add_argument("--s3-prefix-key", default=None, type=str, help="S3 key prefix where data will be stored")
+    args.add_argument("--dataset-name", default=None, type=str, help="Dataset name")
+    args.add_argument("--valid-classes", nargs='+', default=None, help="List of valid classes")
     args.add_argument("--show", action='store_true', default=False, help="Show window with results")
-    # args.add_argument("-b", "--bucket", default='ground-truth', type=str, help="method to extract objects of interest")
+    args.add_argument("-f", "--file", default='config.ini', type=str, help="Path to the .ini config file")
 
-    config = args.parse_args()
+    config = vars(args.parse_args())
+    config = load_config(config)
 
     # The session remembers our connection parameters to Amazon SageMaker. We'll use it to perform all of our Amazon SageMaker operations.
-    role = os.environ.get('AWS_SM_ROLE') 
     sagemaker_session = sagemaker.Session()
     bucket = sagemaker_session.default_bucket()
 
-    prefix_key = config.key
-    assert config.dataset_name is not None
-    if prefix_key is None:
-        prefix_key = config.dataset_name
+    prefix_key = config['app']['s3_prefix_key']
     imgs_prefix = prefix_key + '/images'
     output_prefix = prefix_key + '/annotations'
 
 
     capture_aws(
-        streams_list=config.streams_list,
+        streams_list=config['app']['streams'],
         bucket=bucket,
         key_prefix=imgs_prefix,
-        no_show=not config.show,
+        no_show=not config['show'],
     )
 
     annotate(
         bucket=bucket,
         imgs_prefix=imgs_prefix,
         output_prefix=output_prefix,
-        role=role
+        role=config['role'],
     )
-
-    valid_classes = config.classes
-    if valid_classes is None:
-        valid_classes = [
-            'car', 'person', 'bicycle', 
-            'bus', 'motorcycle', 'truck',
-            'traffic light']
 
     generate_manifest(
         bucket=bucket,
         imgs_prefix=imgs_prefix,
         results_prefix=output_prefix,
-        dataset_name=config.dataset_name,
-        valid_classes=valid_classes,
+        dataset_name=config['dataset_name'],
+        valid_classes=config['valid_classes'],
     )
-
-    tfrecord_uri = os.environ.get('AWS_TFRECORD_ECR_URI') 
-    train_uri = os.environ.get('AWS_TRAIN_ECR_URI') 
 
     # FIXME: Create two ProcessInput for images and manifest
     s3_manifest = 's3://{}/{}'.format(bucket, imgs_prefix)
@@ -429,9 +456,9 @@ def main():
         bucket,
         s3_manifest,
         output_prefix=tfrecord_prefix,
-        valid_classes=valid_classes,
-        container=tfrecord_uri,
-        role=role,
+        valid_classes=config['app']['valid_classes'],
+        container=config['ecr']['tfrecord'],
+        role=config['aws']['role'],
         )
 
     train_data = tfrecord_prefix + '/train.records'
@@ -444,8 +471,8 @@ def main():
         eval_data='validation.records',
         output_prefix=train_output,
         tensorboard_prefix=tensorboard_prefix,
-        container=train_uri,
-        role=role)
+        container=config['ecr']['train'],
+        role=config['aws']['role'])
 
 
 if __name__ == '__main__':
