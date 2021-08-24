@@ -142,7 +142,6 @@ class ModelIE:
 
         self.ie = IECore()
         supported_extensions = ['.xml', '.bin', '.onnx']
-        import pdb; pdb.set_trace()
         if os.path.isfile(model_dir):
             if Path(model_dir).suffix in supported_extensions:
                 self.model = model_dir
