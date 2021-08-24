@@ -215,7 +215,7 @@ class ModelIE:
                 results = results[self.output_blob]
                 # Change a shape of a numpy.ndarray with results ([1, 1, N, 7]) to get another one ([N, 7]),
                 # where N is the number of detected bounding boxes
-                detections = results.reshape(-1, 7)
+                detections = results.reshape(-1, 7).tolist()
             else:
                 detections = results['boxes']
                 labels = results['labels']
