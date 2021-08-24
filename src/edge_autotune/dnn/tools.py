@@ -4,10 +4,16 @@
 """This module implements diverse tools useful to work with DNN models and their whereabouts"""
 
 from functools import partial
+import logging
 import os
 import time
 
-import tensorflow as tf
+try:
+    import tensorflow as tf
+except:
+    logging.warning('TensorFlow module could not be loaded.'
+                    'Ignore if not using any of the functions to load/save TF models.')
+    pass
 
 def load_saved_model(model: str):
     """Load exported pb saved model.
