@@ -443,7 +443,7 @@ def prediction_to_object(predicted, objects, object_map=None):
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             logger.error(f'{exc_type} in {fname}:{exc_tb.tb_lineno}')
-            logger.error(e)
+            raise e
 
         #FIXME: Instead of checking only for 0, check if it is a float number (i.e. check % of one object) 
         if obj_id == 0:
@@ -531,6 +531,6 @@ def translate_to_frame_coordinates(predicted, object_map, objects, frame_size):
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logger.error(f'{exc_type} in {fname}:{exc_tb.tb_lineno}')
-        logger.error(e)
+        raise e
  
     return predicted_in_frame, iou, obj
