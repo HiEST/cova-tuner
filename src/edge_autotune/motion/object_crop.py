@@ -6,6 +6,7 @@
 from copy import deepcopy
 from dataclasses import dataclass
 from enum import Enum
+import logging
 import math
 import os
 import sys
@@ -16,7 +17,7 @@ import numpy as np
 from edge_autotune.motion.motion_detector import resize_if_smaller, merge_overlapping_boxes
 from edge_autotune.dnn import metrics
 
-# from rectpack import newPacker
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -441,9 +442,8 @@ def prediction_to_object(predicted, objects, object_map=None):
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            print(exc_type, fname, exc_tb.tb_lineno)
-            import pdb; pdb.set_trace()
-            print(e)
+            logger.error(f'{exc_type} in {fname}:{exc_tb.tb_lineno}')
+            logger.error(e)
 
         #FIXME: Instead of checking only for 0, check if it is a float number (i.e. check % of one object) 
         if obj_id == 0:
@@ -530,11 +530,7 @@ def translate_to_frame_coordinates(predicted, object_map, objects, frame_size):
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-        print(exc_type, fname, exc_tb.tb_lineno)
-        import pdb; pdb.set_trace()
-        print(e)
-
-    # if iou < 0.5:
-    #     return None, iou, obj
+        logger.error(f'{exc_type} in {fname}:{exc_tb.tb_lineno}')
+        logger.error(e)
  
     return predicted_in_frame, iou, obj
