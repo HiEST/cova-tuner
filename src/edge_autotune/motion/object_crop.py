@@ -437,6 +437,9 @@ def prediction_to_object(predicted, objects, object_map=None):
         
         if not (xmin < xmax and ymin < ymax):
             return None
+        if xmin < 0 or ymin < 0: # TODO: Check why this might happen
+            return None
+
         try:
             obj_id = int(np.median(object_map[ymin:ymax,xmin:xmax]))
         except Exception as e:
