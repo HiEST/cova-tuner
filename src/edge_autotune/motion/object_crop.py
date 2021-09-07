@@ -443,6 +443,8 @@ def prediction_to_object(predicted, objects, object_map=None):
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             logger.error(f'{exc_type} in {fname}:{exc_tb.tb_lineno}')
+            logger.debug(f'coords {ymin}:{ymax},{xmin}:{xmax}')
+            logger.debug(f'object_map.shape: {object_map.shape}')
             raise e
 
         #FIXME: Instead of checking only for 0, check if it is a float number (i.e. check % of one object) 
