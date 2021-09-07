@@ -4,11 +4,13 @@
 """Methods related to the execution of DNN Models"""
 
 import os
-import logging
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+
+import logging
+logger = logging.getLogger(__name__)
 
 try:
     import tensorflow as tf
