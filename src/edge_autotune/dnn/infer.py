@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 try:
     import tensorflow as tf
 except:
-    logging.warning('TensorFlow module could not be loaded.'
+    logger.warning('TensorFlow module could not be loaded.'
                     'Ignore if not using TF models.')
     pass
 
 try:
     from openvino.inference_engine import IECore
 except:
-    logging.warning('IECore could not be loaded.'
+    logger.warning('IECore could not be loaded.'
                     'Ignore if not using OpenVINO models.')
     pass
 
@@ -158,18 +158,18 @@ class ModelIE:
             except:
                 raise Exception(f'{model_dir} does not contain a supported file ({", ".join(supported_extensions)}).')
     
-        logging.info(f'Readin the network: {self.model}')
+        logger.info(f'Readin the network: {self.model}')
         self.net = self.ie.read_network(model=self.model)
 
         if len(self.net.input_info) != 1:
-            logging.error('Only single input topologies are supported')
+            logger.error('Only single input topologies are supported')
             return -1
 
         if len(self.net.outputs) != 1 and not ('boxes' in self.net.outputs or 'labels' in self.net.outputs):
-            logging.error('Only models with 1 output or with 2 with the names "boxes" and "labels" are supported')
+            logger.error('Only models with 1 output or with 2 with the names "boxes" and "labels" are supported')
             return -1
 
-        logging.info('Configuring input and output blobs')
+        logger.info('Configuring input and output blobs')
         # Get name of input blob
         self.input_blob = next(iter(self.net.input_info))
 
@@ -183,7 +183,7 @@ class ModelIE:
             self.net.outputs['boxes'].precision = 'FP32'
             self.net.outputs['labels'].precision = 'U16'
 
-        logging.info('Loading the model to the plugin')
+        logger.info('Loading the model to the plugin')
         self.exec_net = self.ie.load_network(network=self.net, device_name=device)
 
         _, _, self.net_h, self.net_w = self.net.input_info[self.input_blob].input_data.shape
@@ -209,7 +209,7 @@ class ModelIE:
             # Add N dimension to transform to NCHW
             img = np.expand_dims(img, axis=0)
 
-            logging.info('Starting inference in synchronous mode')
+            logger.info('Starting inference in synchronous mode')
             results = self.exec_net.infer(inputs={self.input_blob: img})
 
             

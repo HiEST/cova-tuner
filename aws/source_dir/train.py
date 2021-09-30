@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import logging
 import os
 import time
 from typing import Tuple
@@ -21,6 +22,9 @@ from object_detection.utils import ops
 from object_detection.builders import model_builder, optimizer_builder
 from object_detection.core import standard_fields as fields
 from object_detection.protos import pipeline_pb2
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level='INFO')
 
 
 def _compute_losses_and_predictions_dicts(
@@ -319,7 +323,7 @@ def train_loop(
           dataset_id = i + datasets_in_config
           train_input_config.tf_record_input_reader.input_path.append(train_datasets[dataset_id])
 
-      print(f'train_input_config: {train_input_config}')
+      logger.info(f'train_input_config: {train_input_config}')
 
   if fine_tune_checkpoint:
     train_config.fine_tune_checkpoint = fine_tune_checkpoint
@@ -536,7 +540,7 @@ def train_loop(
             logged_step = global_step.value()
 
           if global_step.value() % 10 == 0:
-              print(f'[step={global_step.value():.3f}] loss={loss}')
+              logger.info(f'[step={global_step.value():.3f}] loss={loss}')
 
           if ((int(global_step.value()) - checkpointed_step) >=
               checkpoint_every_n):
@@ -643,10 +647,10 @@ def main():
   assert os.path.isfile(args.train_dataset)
   assert os.path.isfile(args.label_map)
 
-  print('Starting training...')
-  print(f'args: {args}')
+  logger.info('Starting training...')
+  logger.info(f'args: {args}')
   train(args)
-  print('Training finished.')
+  logger.info('Training finished.')
 
   # export_trained_model(
   #   pipeline_config_path=args.pipeline_config_path,

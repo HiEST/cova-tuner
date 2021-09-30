@@ -1,18 +1,17 @@
 import argparse
 import configparser
-from typing import Tuple
-import os
-import sys
-import time
-
 from datetime import datetime
 import io
 import json
+import logging
+import os
 from pathlib import Path
+import sys
+from typing import Tuple
+import time
 
 import cv2
 import numpy as np
-import pandas as pd
 import tqdm
 
 import boto3
@@ -29,11 +28,15 @@ from edge_autotune.motion import motion_detector as motion
 
 from model_package_arns import ModelPackageArnProvider
 
+logger = logging.getLogger(__name__)
+logging.basicConfig(level='INFO')
+
 
 def load_config(args):
+    args = {k:v for k,v in args.items() if not v is None}
     config = configparser.ConfigParser(
         converters={'list': lambda x: [i.strip() for i in x.split(',')]})
-    config.read(args['config'])
+    config.read(args['file'])
 
     required_fields = {
         'app': {
@@ -41,6 +44,8 @@ def load_config(args):
             's3_prefix_key': 'str',
             'dataset_name': 'str',
             'valid_classes': 'list',
+            'show': 'bool',
+            'warmup': 'int',
         },
         'aws': {
             'role': 'str',
@@ -50,7 +55,7 @@ def load_config(args):
             'tftrain': 'str',
         },
     }
-    
+
     config = {s:dict(config.items(s)) for s in config.sections()}
     # Merge with config with args, having this higher priority
     config['app'] = {**config['app'], **args}
@@ -59,14 +64,15 @@ def load_config(args):
         try:
             assert config.get(field, None)
         except Exception as e:
-            print(f'Missing field {field} in config file.')
+            logger.error(f"Missing field '{field}' in config file.")
             raise e
         for param, valtype in params.items():
             try:
-                assert config[field].get(param, None)
+                assert not config[field].get(param, None) is None
             except Exception as e:
-                print(f"Missing parameter {param} on field {field} in config file")
+                logger.error(f"Missing parameter '{param}' on field '{field}' in config file")
                 raise e
+                
             if valtype == 'list' and isinstance(config[field][param], str):
                 config[field][param] = json.loads(config[field].get(param))
     
@@ -80,6 +86,7 @@ def capture_aws(
     resize: Tuple[int,int] = (1280, 720),
     crop_motion: bool = False,
     framerate: int = 1,
+    warmup: int = 5,
     max_images: int = 1000,
     min_images: int = 100,
     min_area: int = 1000,
@@ -89,55 +96,56 @@ def capture_aws(
     """Capture and annotate images from stream and generate dataset.
 
     Args:
-        stream (Tuple[str]): List of input streams from which to capture images.
+        streams_list (Tuple[str]): List of input streams from which to capture images.
+        bucket (str): name of the S3 bucket where selected images are saved.
+        key_prefix (str): key prefix inside bucket where selected images are saved.
+        resize (Tuple[int,int], optional): resolution to which frames are resized before being saved. Defaults to (1280, 720).
+        crop_motion (bool, optional): select and save cropped regions with motion or full frames. Defaults to False (full frames used).
         valid_classes (str, optional): Comma-separated list of classes to detect. If None, all classes will be considered during annotation. Defaults to None
-        background_method (int, optional): Method to generate background image. Defaults to 6 (MOG).
-        frame_skip (int, optional): Frame skipping value. Defaults to 25.
-        min_score (float, optional): Minimum score to accept groundtruth model's predictions as valid. Defaults to 0.5.
+        framerate (int, optional): Rate at which frames at capture from the stream (in frames per second). Defaults to 1.
+        warmup (int, optional): Warmup period (in seconds) in which captured frames are used to initialize the background model. Defaults to 5.
         max_images (int, optional): Stop when maximum is reached. Defaults to 1000.
         min_images (int, optional): Prevents timeout to stop execution if the minimum of images has not been reached. Used only if timeout > 0. Defaults to 0.
         min_area (int, optional): Minimum area for countours to be considered as actual movement. Defaults to 1000.
-        timeout (int, optional): timeout for capture. When reached, capture stops unless there is a minimum of images enforced. Defaults to 0.
-        tmp_dir (str, optional): Path to temporary directory where intermediate results are written. Defaults to '/tmp'.
-        first_frame_background (bool, optional): If True, first frame of the stream is chosen as background and never changed. Defaults to False.
-        flush (bool, optional): If True, new frames and annotations are written to the output TFRecord as soon as received. Defaults to True.
+        timeout (int, optional): Timeout for capture. When reached, capture stops unless there is a minimum of images enforced. Defaults to 0.
+        no_show (bool, optional): Do not show window with captured frames and bounding boxes with motion. Defaults to True.
     """
-    max_boxes = 100
-    background = motion.BackgroundCV()
-    motionDetector = motion.MotionDetector(background=background, min_area_contour=min_area)
-    num_selected_images = 0
 
-    motion_warmup_secs = 5
     client = AWSClient(bucket=bucket, key_prefix=key_prefix)
 
     for stream in tqdm.tqdm(streams_list):
-        print(f'capturing images from {stream}')
+        logger.info(f'capturing images from {stream}')
         cap = cv2.VideoCapture(stream)
+        if not cap.isOpened():
+            logger.error(f'Stream {stream} could not be opened.')
+            sys.exit(1)
+        
+        background = motion.BackgroundCV()
+        motionDetector = motion.MotionDetector(background=background, min_area_contour=min_area)
+        num_selected_images = 0
+
+        
         next_frame = 0
         stream_fps = cap.get(cv2.CAP_PROP_FPS)
-        print(f'stream fps: {stream_fps}')
+        
         frame_skip = round(stream_fps/framerate)
-        motion_warmup_frames = round(motion_warmup_secs*stream_fps)
+        motion_warmup_frames = round(warmup*stream_fps)
+
         num_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) / frame_skip)
         progress_cap = tqdm.tqdm(range(int(num_frames)), unit=' decoded frames')
 
-        print(f'frameskip of {frame_skip} frames.')
-        print(f'Warmup motion: {next_frame} < {motion_warmup_frames}')
         ret = True
         for _ in range(num_frames):
             ret, frame = cap.read()
             if not ret:
                 break
             progress_cap.update(1)
-            print(f'next_frame: {next_frame}')
 
             next_frame += frame_skip
             cap.set(1, next_frame)
             
             regions_proposed, areas = motionDetector.detect(frame)
-
             if next_frame < motion_warmup_frames:
-                print(f'Warmup motion: {next_frame} < {motion_warmup_frames}')
                 continue
 
             imgs_to_upload = []
@@ -171,7 +179,7 @@ def capture_aws(
         
         client.upload_all()
 
-        print(f'Uploaded {num_selected_images} from stream {Path(stream).stem}')
+        logger.info(f'Uploaded {num_selected_images} from stream {Path(stream).stem}')
 
 
 ## Auxiliary Functions
@@ -204,7 +212,7 @@ def batch_transform(data, transformer, batch_output, content_type):
     ts0 = time.time()
     transformer.wait()
     ts_exec = time.time() - ts0
-    print(f'Batch Transform job created in {ts_create:.2f} seconds and executed in {ts_exec:.2f} seconds.')
+    logger.info(f'Batch Transform job created in {ts_create:.2f} seconds and executed in {ts_exec:.2f} seconds.')
 
     assert batch_output == transformer.output_path
     output = transformer.output_path
@@ -244,7 +252,7 @@ def annotate(bucket, imgs_prefix, output_prefix, role):
     batch_output = 's3://{}/{}'.format(bucket, output_prefix)
 
     ts0 = time.time()
-    model, batch = deploy_model(
+    _, batch = deploy_model(
         role=role,
         num_instances=instance_count,
         model_arn=model_arn,
@@ -255,12 +263,12 @@ def annotate(bucket, imgs_prefix, output_prefix, role):
     )
     ts1 = time.time()
 
-    print(f'Model deployed successfuly after {ts1-ts0:.2f} seconds.')
+    logger.info(f'Model deployed successfuly after {ts1-ts0:.2f} seconds.')
 
     ts0 = time.time()
     output_path = batch_transform(batch_input, batch, batch_output, content_type)
     ts1 = time.time()
-    print(f'Images successfuly annotated in {ts1-ts0:.2f} seconds. Results stored in {output_path}')
+    logger.info(f'Images successfuly annotated in {ts1-ts0:.2f} seconds. Results stored in {output_path}')
     return output_path
 
 
@@ -274,9 +282,7 @@ def generate_manifest(bucket, imgs_prefix, results_prefix, dataset_name, valid_c
     s3 = boto3.client('s3')
     s3_objects = s3.list_objects_v2(Bucket=bucket, Prefix=results_prefix)['Contents']
     for obj in s3_objects:
-        print(obj)
-        path, filename = os.path.split(obj['Key'])
-        # with open(f'/tmp/{filename}', 'wb') as f:
+        _, filename = os.path.split(obj['Key'])
         with io.BytesIO() as f:
             s3.download_fileobj(bucket, obj['Key'], f)
             f.seek(0)
@@ -335,7 +341,7 @@ def generate_tfrecord(bucket, s3_manifest, output_prefix, valid_classes, contain
         base_job_name='tf2-object-detection'
     )
     ts1 = time.time()
-    print(f'Took {ts1-ts0:.2f} seconds to create data Processor.')
+    logger.info(f'Took {ts1-ts0:.2f} seconds to create data Processor.')
 
     input_folder = '/opt/ml/processing/input'
     ground_truth_manifest = '/opt/ml/processing/input/manifest.json'
@@ -370,7 +376,7 @@ def generate_tfrecord(bucket, s3_manifest, output_prefix, valid_classes, contain
         ]
     )
     ts1 = time.time()
-    print(f'Took {ts1-ts0:.2f} seconds to execute data Processor.')
+    logger.info(f'Took {ts1-ts0:.2f} seconds to execute data Processor.')
 
 
 def train(train_input, train_data, eval_data, output_prefix, tensorboard_prefix, container, role):
@@ -412,6 +418,8 @@ def main():
     args.add_argument("--s3-prefix-key", default=None, type=str, help="S3 key prefix where data will be stored")
     args.add_argument("--dataset-name", default=None, type=str, help="Dataset name")
     args.add_argument("--valid-classes", nargs='+', default=None, help="List of valid classes")
+    args.add_argument("--warmup", type=int, default=10, help="Number of frames to warmup motion before start capturing")
+    args.add_argument("--framerate", type=int, default=1, help="Rate at which images are captured (in frames/second)")
     args.add_argument("--show", action='store_true', default=False, help="Show window with results")
     args.add_argument("-f", "--file", default='config.ini', type=str, help="Path to the .ini config file")
 
@@ -431,7 +439,7 @@ def main():
         streams_list=config['app']['streams'],
         bucket=bucket,
         key_prefix=imgs_prefix,
-        no_show=not config['show'],
+        no_show=not config['app']['show'],
     )
 
     annotate(
