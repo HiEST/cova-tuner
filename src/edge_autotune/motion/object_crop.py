@@ -10,6 +10,7 @@ import logging
 import math
 import os
 import sys
+from typing import Dict, List, Tuple, Optional
 
 import cv2
 import numpy as np
@@ -32,7 +33,6 @@ class MovingObject:
 
     def area(self) -> float:
         return self.width()*self.height()
-        # return (self.box[2]-self.box[0])*(self.box[3]-self.box[1])
 
     def width(self) -> int:
         return self.box[2]-self.box[0] + self.border[0]+self.border[2]
@@ -421,7 +421,11 @@ def combine_resize(frames: list, box_lists: list, roi_size: list = (100, 100), b
     return merged_img, object_map, objects
     
 
-def prediction_to_object(predicted, objects, object_map=None):
+def prediction_to_object(
+    predicted: Tuple[int, int, int, int],
+    objects: List[MovingObject],
+    object_map: Optional[List[List[np.uint8]]] = None) -> Tuple[MovingObject]:
+
 
     if object_map is None:
         max_iou = [0, None]
@@ -456,86 +460,83 @@ def prediction_to_object(predicted, objects, object_map=None):
         obj = objects[obj_id-1]
 
     return obj
-    
 
-def translate_to_frame_coordinates(predicted, object_map, objects, frame_size):
+
+def adjust_predicted_to_object_placement(
+    predicted: Tuple[int, int, int, int],
+    object: MovingObject) -> Tuple[int, int, int, int]:
+    """Adjustes the predicted bounding box and moves its coordinates within the object's box within the composed frame,
+    i.e., returns a bounding box contained completely within the object (no borders).
+    Returns None if predicted and object's box do not overlap."""
+
+    if predicted[0] > object.inf_box[2] or \
+        predicted[1] > object.inf_box[3] or \
+        predicted[2] < object.inf_box[0] or \
+        predicted[3] < object.inf_box[1]:
+        return None
+
+    return [
+        max(predicted[0], object.inf_box[0]+object.border[0]),
+        max(predicted[1], object.inf_box[1]+object.border[1]),
+        min(predicted[2], object.inf_box[2]-object.border[2]),
+        min(predicted[3], object.inf_box[3]-object.border[3]),
+    ]
+
+
+def translate_to_object_coordinates(
+    predicted: Tuple[int, int, int, int],
+    object: MovingObject) -> Tuple[int, int, int, int]:
+    """Returns predicted coordinates translated using the object's origin as their origin.
+        Pre-requisit: predicted coordinates are within object.inf_box.
+    """
+
+    adjusted = adjust_predicted_to_object_placement(predicted, object)
+    if adjusted is None:
+        return None
+
+    origin_object = [
+        object.inf_box[0] + object.border[0],
+        object.inf_box[1] + object.border[1],
+    ]
+
+    return [
+        adjusted[0] - origin_object[0],
+        adjusted[1] - origin_object[1],
+        adjusted[2] - origin_object[0],
+        adjusted[3] - origin_object[1],
+    ]
+
+
+def translate_to_frame_coordinates(
+    predicted: Tuple[int, int, int, int],
+    object_map: List[List[np.uint8]],
+    objects: List[MovingObject],
+    min_overlap: float = 0) -> Tuple[int, int, int, int]:
+
+    # 1. Obtain the object that matches the predicted bounding box.
     obj = prediction_to_object(predicted, objects, object_map=object_map)
     if obj is None:
-        return None, 0, None
+        return None
 
-    # Translate to coordinates in original frame from the camera
-    # roi is in camera frame coordinates  
-    roi_in_frame = obj.box 
-    # inference box is in merged frame coordinates and includes borders
-    roi_in_composed = obj.inf_box
-    roi_in_composed_no_border = [
-        roi_in_composed[0]+obj.border[0],
-        roi_in_composed[1]+obj.border[1],
-        roi_in_composed[2]-obj.border[2],
-        roi_in_composed[3]-obj.border[3],
+    # 2. Adjust the predicted bounding box to the region the object occupies within the composed frame
+    adjusted = adjust_predicted_to_object_placement(predicted, obj)
+    print(f'adjusted: {adjusted}')
+    print(f'predicted: {predicted}')
+
+    # 3. Check that the overlap is greater than the minimum specified.
+    overlap = metrics.get_overlap(predicted, adjusted)
+    print(f'overlap: {overlap}')
+    if overlap < min_overlap:
+        return None
+
+    # 4. Translate to object coordinates
+    object_coordinates = translate_to_object_coordinates(predicted, obj)
+    print(f'object_coordinates: {object_coordinates}')
+
+    # 5. Translate to frame coordinates
+    return [
+        object_coordinates[0] + obj.box[0],
+        object_coordinates[1] + obj.box[1],
+        object_coordinates[2] + obj.box[0],
+        object_coordinates[3] + obj.box[1],
     ]
-
-    # Sanity check
-    assert predicted[0] < predicted[2]
-    assert predicted[1] < predicted[3]
-
-    # Remove borders
-    predicted_no_border = [
-        max(predicted[0], roi_in_composed_no_border[0]),
-        max(predicted[1], roi_in_composed_no_border[1]),
-        min(predicted[2], roi_in_composed_no_border[2]),
-        min(predicted[3], roi_in_composed_no_border[3]),
-    ]
-
-    # predicted box wrt RoI's origin
-    predicted_origin_roi = [
-        predicted_no_border[0]-roi_in_composed_no_border[0],
-        predicted_no_border[1]-roi_in_composed_no_border[1],
-        predicted_no_border[2]-roi_in_composed_no_border[0],
-        predicted_no_border[3]-roi_in_composed_no_border[1],
-    ]
-
-    # predicted box wrt to frame coordinates
-    predicted_in_frame = [
-        predicted_origin_roi[0]+roi_in_frame[0],
-        predicted_origin_roi[1]+roi_in_frame[1],
-        predicted_origin_roi[2]+roi_in_frame[0],
-        predicted_origin_roi[3]+roi_in_frame[1],
-    ]
-
-    try:
-        # coordinates are within [0,0] and [frame_width, frame_height]
-        for i in range(4):
-            frame_dim = frame_size[i%2]
-            assert predicted_in_frame[i] >= 0
-            assert predicted_in_frame[i] <= frame_dim
-
-        assert predicted_in_frame[0] < predicted_in_frame[2]
-        assert predicted_in_frame[1] < predicted_in_frame[3]
-
-        # predicted bbox is within roi in frame
-        assert predicted_in_frame[0] >= roi_in_frame[0]
-        assert predicted_in_frame[1] >= roi_in_frame[1]
-        assert predicted_in_frame[2] <= roi_in_frame[2]
-        assert predicted_in_frame[3] <= roi_in_frame[3]
-    except Exception as e:
-        return None, 0, None
-
-
-     # if new box does not intersect enough with the original detection, skip it
-    original_prediction_in_frame = [
-        predicted[0]-obj.inf_box[0]+obj.box[0],
-        predicted[1]-obj.inf_box[1]+obj.box[1],
-        predicted[2]-obj.inf_box[0]+obj.box[0],
-        predicted[3]-obj.inf_box[1]+obj.box[1],
-    ]
-
-    try:
-        iou, _ = metrics.get_iou(original_prediction_in_frame, predicted_in_frame)
-    except Exception as e:
-        exc_type, exc_obj, exc_tb = sys.exc_info()
-        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-        logger.error(f'{exc_type} in {fname}:{exc_tb.tb_lineno}')
-        raise e
- 
-    return predicted_in_frame, iou, obj

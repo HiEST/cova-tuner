@@ -1,5 +1,30 @@
+from typing import Tuple
+
 import numpy as np
 import pandas as pd
+
+
+def get_overlap(bb1: Tuple[int, int, int, int], bb2: Tuple[int, int, int, int]) -> float:
+    """
+    Computes the overlap between two bounding boxes. 
+    Returns the ratio of area between bb1 and the intersection of bb1 and bb2.
+    """
+    intersection = [
+        max(bb1[0], bb2[0]),
+        max(bb1[1], bb2[1]),
+        min(bb1[2], bb2[2]),
+        min(bb1[3], bb2[3]),
+    ]
+
+    if intersection[0] > intersection[2] or \
+        intersection[1] > intersection[3]:
+        return 0.0
+
+    area_bb1 = (bb1[2]-bb1[0])*(bb1[3]-bb1[1])
+    area_intersection = (intersection[2]-intersection[0])*(intersection[3]-intersection[1])
+
+    return area_intersection/area_bb1
+
 
 def get_iou(bb1, bb2):
     """
