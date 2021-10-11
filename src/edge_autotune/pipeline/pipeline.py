@@ -7,59 +7,14 @@ from pathlib import Path
 import sys
 from typing import NewType, Any, Tuple, Callable, Dict, List
 
-import cv2
-
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level='DEBUG')
 
 Args = NewType('Args', Dict[str, Any])
 Stage = NewType('Stage', Tuple[str, Args])
 
-PIPELINE = ['capture', 'filter', 'annotate', 'train']
-CONSTRUCTORS = ['COVACapture', 'COVAFilter', 'COVAAnnotate', 'COVATrain']
-
-
-class COVAPipeline:
-    def __init__(self, capturer: Stage, filter: Stage,
-                annotator: Stage, trainer: Stage):
-
-        self.factory = COVAFactory()
-        self.pipeline = {}
-
-        capture_plugin, capturer_args = capturer
-        filter_plugin, filter_args = filter
-        annotate_plugin, annotator_args = annotator
-        train_plugin, trainer_args = trainer
-
-        self.pipeline['capture'] = self.factory.get(capture_plugin, *capturer_args)
-        self.pipeline['filter'] =  self.factory.get(filter_plugin, *filter_args)
-        self.pipeline['annotate'] =  self.factory.get(annotate_plugin, *annotator_args)
-        self.pipeline['train'] =  self.factory.get(train_plugin, *trainer_args)
-
-    def run(self):
-        
-        while True:
-            ret, frame = self.pipeline['capture'].capture()
-            if not ret:
-                break
-        
-            ret, filtered = self.pipeline['filter'].filter(frame)
-            if not ret:
-                break
-            elif not len(filtered):
-                continue
-
-            ret = self.pipeline['annotate'].annotate(filtered)
-            if not ret:
-                break
-
-        for stage in PIPELINE:
-            self.pipeline[stage].epilogue()
-            self.pipeline[stage].epilogue()
-            self.pipeline[stage].epilogue()
-
-        self.pipeline['train'].train()
+PIPELINE = ['capture', 'filter', 'annotate', 'dataset', 'train']
+CONSTRUCTORS = ['COVACapture', 'COVAFilter', 'COVAAnnotate', 'COVADataset', 'COVATrain']
 
 
 class COVAFactory:
@@ -69,7 +24,7 @@ class COVAFactory:
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         plugins_dir = os.path.join(current_dir, 'plugins')
-        self._load_plugins(plugins_dir)
+        self.load_plugins(plugins_dir)
 
     @staticmethod
     def _detect_class(module) -> Tuple[Callable, str]:
@@ -91,10 +46,13 @@ class COVAFactory:
         spec.loader.exec_module(module)
 
         constructor = COVAFactory._detect_class(module)
-        logger.info(f'Loaded plugin {constructor.__name__} from module {module.__name__}.')
+        if constructor is None:
+            logger.warning('Could not load plugin from module %s.', module.__name__)
+        else:
+            logger.info('Loaded plugin %s from module %s.', constructor.__name__, module.__name__)
         return constructor, module.__name__
 
-    def _load_plugins(self, plugins_path: str) -> None:
+    def load_plugins(self, plugins_path: str) -> None:
         """Loads the plugins found in the plugins_path."""
         if os.path.isdir(plugins_path):
             plugins = [str(p) for p in Path(plugins_path).rglob('*.py')]
@@ -127,7 +85,7 @@ class COVAFactory:
             self._plugins_by_class[plugin.__name__] = plugin
             self._plugins_by_module[module_name] = plugin
 
-    def get(self, plugin_name: str, *args, **kwargs):
+    def get(self, plugin_name: str, kwargs):
         """Returns objects of the class defined in plugin plugin_name."""
         try:
             constructor_fn = self._plugins_by_class[plugin_name]
@@ -135,10 +93,79 @@ class COVAFactory:
             try:
                 constructor_fn = self._plugins_by_module[plugin_name]
             except KeyError:
-                logger.error(f'Plugin {plugin_name} not available.')
+                logger.error('Plugin %s not available.', plugin_name)
                 sys.exit(1)
 
-        return constructor_fn(*args, *kwargs)
+        return constructor_fn(**kwargs)
+
+
+class COVAPipeline:
+    """Abstract class defining pipelines in COVA."""
+    @abstractmethod
+    def load_pipeline(self, pipeline_config: dict) -> None:
+        pass
+    
+    @abstractmethod
+    def run(self):
+        pass
+
+
+class COVAAutoTune(COVAPipeline):
+    """
+    Class implementing a COVAPipeline for automatically tuning models in 5 steps:
+        1. capture images
+        2. filter images
+        3. annotate images
+        4. create dataset
+        5. train model
+
+    The pipeline executes 1-2-3 while until any of the steps returns False.
+    Then, executes 4 and 5 once.
+    """
+    def __init__(self):
+        self.factory = COVAFactory()
+        self.pipeline = {}
+
+    def load_pipeline(self, pipeline_config: dict) -> None:
+
+        for stage, config in pipeline_config.items():
+            if config.get('plugin_path', None):
+                self.factory.load_plugins(config['plugin_path'])
+            args = config['args']
+            self.pipeline[stage] = self.factory.get(config['plugin'], args)
+            logger.info('Using plugin %s for %s.', self.pipeline[stage].__class__.__name__, stage)
+
+        try:
+            assert all([stage in self.pipeline for stage in PIPELINE])
+        except AssertionError:
+            logger.error('Some pipeline stages are missing in the input config.')
+            sys.exit(1)
+
+    def run(self):
+        while True:
+            ret, frame = self.pipeline['capture'].capture()
+            if not ret:
+                break
+            print(frame.shape)
+        
+            filtered = self.pipeline['filter'].filter(frame)
+
+            if len(filtered) == 0:
+                continue
+
+            ret = self.pipeline['annotate'].annotate(frame)
+            if not ret:
+                break
+
+        for stage in ['capture', 'filter']:
+            self.pipeline[stage].epilogue()
+
+        images_path, annotations_path = self.pipeline['annotate'].epilogue()
+        logger.info('images stored in %s', images_path)
+        logger.info('annotations stored in %s', annotations_path)
+
+        dataset_path = self.pipeline['dataset'].generate(images_path, annotations_path)
+        self.pipeline['train'].train(dataset_path)
 
 
 class COVACapture(ABC):
@@ -167,6 +194,19 @@ class COVAFilter(ABC):
 class COVAAnnotate(ABC):
     @abstractmethod
     def annotate(self, img) -> None:
+        """Processes one image."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def epilogue(self, *args, **kwargs) -> None:
+        """Processes all pending images, if any.
+        The images are sent to the server. Yields annotations."""
+        raise NotImplementedError
+
+
+class COVADataset(ABC):
+    @abstractmethod
+    def generate(self, path) -> None:
         """Processes one image."""
         raise NotImplementedError
 
