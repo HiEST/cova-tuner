@@ -3,6 +3,7 @@
 
 """Methods related to the execution of DNN Models"""
 
+from abc import ABC, abstractmethod
 import os
 from pathlib import Path
 
@@ -32,12 +33,20 @@ from edge_autotune.dnn.tools import load_model, load_pbtxt
 from edge_autotune.dnn.dataset import get_dataset_labels
 
 
-# gpus = tf.config.experimental.list_physical_devices('GPU')
-# for gpu in gpus:
-#     tf.config.experimental.set_memory_growth(gpu, True)
+YOLOV3_ANCHORS = [
+    [116, 90, 156, 198, 373, 326],
+    [30, 61, 62, 45, 59, 119],
+    [10, 13, 16, 30, 33, 23],
+]
 
 
-class Model:
+class Model(ABC):
+    @abstractmethod
+    def run(batch: list) -> list:
+        raise NotImplemented
+
+
+class ModelTF(Model):
     def __init__(
         self,
         model_dir: str,
@@ -66,7 +75,7 @@ class Model:
             assert self.label_map
         
 
-    def run(self, batch: list):
+    def run(self, batch: list) -> list:
         """Run inference on the batch of images.
 
         Args:
@@ -117,7 +126,8 @@ class Model:
 
         return batch_results
 
-class ModelIE:
+
+class ModelIE(Model):
     def __init__(
         self,
         model_dir: str,
@@ -165,7 +175,15 @@ class ModelIE:
             logger.error('Only single input topologies are supported')
             return -1
 
-        if len(self.net.outputs) != 1 and not ('boxes' in self.net.outputs or 'labels' in self.net.outputs):
+        self.model_type = 'object_detection'
+        if len(self.net.outputs) == 3:
+            if not all(['YoloRegion' in region for region in self.net.outputs.keys()]):
+                logger.error('YOLOv3 models not supported.')
+                return -1
+            logger.error('Only models with 1 or 2 outputs are supported.')
+            return -1 
+            
+        elif len(self.net.outputs) != 1 and not ('boxes' in self.net.outputs or 'labels' in self.net.outputs):
             logger.error('Only models with 1 output or with 2 with the names "boxes" and "labels" are supported')
             return -1
 
@@ -179,7 +197,7 @@ class ModelIE:
         if len(self.net.outputs) == 1:
             self.output_blob = next(iter(self.net.outputs))
             self.net.outputs[self.output_blob].precision = 'FP32'
-        else:
+        elif self.model_type != 'yolo':
             self.net.outputs['boxes'].precision = 'FP32'
             self.net.outputs['labels'].precision = 'U16'
 
@@ -188,8 +206,8 @@ class ModelIE:
 
         _, _, self.net_h, self.net_w = self.net.input_info[self.input_blob].input_data.shape
 
-    
-    def run(self, batch: list):
+
+    def run(self, batch: list) -> list:
         """Run inference on the batch of images.
 
         Args:
