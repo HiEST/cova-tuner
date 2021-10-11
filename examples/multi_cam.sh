@@ -1,0 +1,1 @@
+edge_autotune deploy -s data/castelloli/cam17/20200202111526.cam17.4.mp4 -s data/castelloli/cam17/20200202123657.cam17.2.mp4 -s data/castelloli/cam26/20200202111527.cam26.3.mp4 -s data/castelloli/cam38/20200202094224.cam38.0.mp4 -m models/ssd_mobilenet_v2_320x320_coco17_tpu-8/checkpoint --classes car,person,bike,motorcycle --debug --frame-skip 5

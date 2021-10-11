@@ -7,6 +7,7 @@ from __future__ import absolute_import
 
 from collections import namedtuple
 import io
+import logging
 import os
 from pathlib import Path
 import json
@@ -15,9 +16,20 @@ import cv2
 import numpy as np
 import pandas as pd
 from PIL import Image
-import tensorflow.compat.v1 as tf
 
-from object_detection.utils import dataset_util
+try:
+    import tensorflow.compat.v1 as tf
+except:
+    logging.warning('TensorFlow module could not be loaded.'
+                    'Ignore if not using any of the functions to generate TFRecords.')
+    pass
+
+try:
+    from object_detection.utils import dataset_util
+except:
+    logging.warning('Object Detection API could not be loaded.'
+                    'Ignore if not using any of the functions to generate TFRecords.')
+    pass
 
 from edge_autotune.dnn.tools import label_to_id_map
 

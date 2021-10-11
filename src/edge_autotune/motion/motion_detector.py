@@ -3,11 +3,24 @@
 
 """This module implements MotionDetetor and Background classes, and auxiliary methods"""
 
+from enum import Enum
+from logging import BASIC_FORMAT
 from typing import Tuple
 
 import cv2
 import numpy as np
 import imutils
+
+
+class BackgroundMethod(Enum):
+    FIRST = 1
+    AVERAGE = 2
+    PREVIOUS = 3
+    ACUM_MEAN = 4
+    ACUM_MEDIAN = 5
+    MOG2 = 6
+    HYBRID = 7
+    KNN = 8
 
 
 class Background:
@@ -29,38 +42,138 @@ class Background:
                 Useful when the current background can be considered optimal.
     """
 
-    def __init__(self, no_average: bool = False, skip: int = 20, take: int = 10, use_last: int = 15):
-        self.background = None
+    def __init__(self, take: int = 10, use_last: int = 15):
+        self.background_blur = None
         self.background_color = None
+        self.mask = None
+
+            
+    def freeze(self):
+        self.frozen = True
+
+
+    def unfreeze(self):
+        self.frozen = False
+
+class BackgroundCV(Background):
+    """This class models the background from a scene using MOG2 """
+    def __init__(self, method=BackgroundMethod.MOG2):
+        if method == BackgroundMethod.MOG2:
+            self.model = cv2.createBackgroundSubtractorMOG2()
+        elif method == BackgroundMethod.KNN:
+            self.model = cv2.createBackgroundSubtractorKNN()
+        else:
+            raise ValueError('Incorrect BGS method for BackgroundCV')
+
+        self.kernel = np.ones((2, 2), np.uint8)
+
+
+    def update(self, frame):
+        self.background_color = None
+        self.mask = self.model.apply(frame)
+        self.mask = cv2.dilate(self.mask, self.kernel, iterations=2)
+        return self.mask
+
         
-        self.skip = skip
+    def getBackgroundImage(self):
+        if self.background_color is None:
+            self.background_color = self.model.getBackgroundImage()
+            self.background_blur = GaussianBlur(self.background_color)
+        
+        return self.background_blur
+
+class BackgroundHybrid(Background):
+    def __init__(self):
+        self.model = cv2.createBackgroundSubtractorMOG2
+        self.kernel = np.ones((5, 5), np.uint8)
+
+    def update(self, frame):
+        if self.skip > 1:
+            self.skipped += 1
+            if self.skipped < self.skip:
+                if self.background is None:
+                    self.background = GaussianBlur(frame)
+                    self.background_color = frame.copy()
+                    self.background_model.apply(frame)
+                return self.background
+            self.skipped = 0
+            
+        self.background_model.apply(frame)
+
+        # We avoid computing background image unnecessarily
+        if self.method != BackgroundMethod.HYBRID:
+            return None
+        
+        self.background_color = self.background_model.getBackgroundImage()
+        self.background = GaussianBlur(self.background_color)
+
+
+        self.current_gray = GaussianBlur(frame)
+        self.current_delta = cv2.absdiff(background, self.current_gray)
+        self.current_mask = cv2.threshold(
+                                    self.current_delta, 
+                                    self.delta_threshold, 
+                                    255, 
+                                    cv2.THRESH_BINARY)[1]
+    
+        self.current_threshold = cv2.dilate(self.current_mask, self.kernel, iterations=2)
+            
+        return self.current_threshold
+
+
+class BackgroundSimple(Background):
+    def __init__(self, method, take: int = 10, use_last: int = 15):
+        self.prev_background = None
+        self.method = method
+        
         self.use_last = use_last
         self.take = take
 
         self.last_avgs = []
         self.last_frames = []
-        self.skipped = 0
 
-        self.frozen = no_average
+        self.frozen = (method == BackgroundMethod.FIRST)
+        self.kernel = np.ones((5, 5), np.uint8)
 
     def update(self, frame: np.array):
         """Update background with new frame
         
         :param frame: 3D numpy array containing a frame
         """
-
         if self.background is None:
             self.background = GaussianBlur(frame)
             self.background_color = frame.copy()
+            self.last_frames.append(self.background_color)
+            self.prev_background = self.background
             return self.background
 
         if self.frozen:
             return self.background
-        
+
+        if self.method == BackgroundMethod.PREVIOUS:
+            prev_background = self.prev_background
+            self.prev_background = self.background
+
+            self.background = GaussianBlur(frame)
+            self.background_color = frame.copy()
+
+            return prev_background
+
         self.skipped += 1
 
+        if self.method in [BackgroundMethod.ACUM_MEAN, BackgroundMethod.ACUM_MEAN]:
+            self.last_frames.append(frame.copy())
+            if len(self.last_frames) > self.use_last:
+                self.last_frames = self.last_frames[1:]
+            if self.method == BackgroundMethod.ACUM_MEAN:
+                self.background_color = np.mean(self.last_frames, axis=0).astype(np.uint8)
+            else:
+                self.background_color = np.median(self.last_frames, axis=0).astype(np.uint8)
+            self.background = GaussianBlur(self.background_color)
+            return self.background
+
         # skip this frame for the average
-        if self.skipped <= self.skip:
+        elif self.skipped <= self.skip:
             return self.background
         
         # count this frame for the average
@@ -92,13 +205,6 @@ class Background:
         
         return self.background
 
-            
-    def freeze(self):
-        self.frozen = True
-
-    def unfreeze(self):
-        self.frozen = False
-
 
 class MotionDetector:
     """
@@ -124,11 +230,6 @@ class MotionDetector:
         self.merge_rois = merge_rois
         self.delta_threshold = delta_threshold
         self.min_area_contour = min_area_contour
-        self.kernel = np.ones((5, 5), np.uint8)
-
-        self.current_gray = None
-        self.current_delta = None
-        self.current_threshold = None
 
         self.roi_size = roi_size
 
@@ -154,18 +255,16 @@ class MotionDetector:
         Returns:
             tuple: Regions where movement is detected [xmin, ymin, xmax, ymax], and the area in pixels of each region.
         """
-        background = self.background.update(frame)
-        self.current_gray = GaussianBlur(frame)
-        self.current_delta = cv2.absdiff(background, self.current_gray)
-        self.current_threshold = cv2.threshold(
-                                    self.current_delta, 
-                                    self.delta_threshold, 
-                                    255, 
-                                    cv2.THRESH_BINARY)[1]
+
+        frame_mask = self.background.update(frame)
         
-        self.current_threshold = cv2.dilate(self.current_threshold, self.kernel, iterations=2)
+        # cv2.imshow('Frame', frame_mask) 
+        # key = cv2.waitKey(1) & 0xFF
+        # if key == ord("q"):
+        #     sys.exit(1)
+        
         cnts = cv2.findContours(
-            self.current_threshold.copy(), 
+            frame_mask.copy(), 
             cv2.RETR_EXTERNAL,
             cv2.CHAIN_APPROX_SIMPLE
         )
@@ -285,13 +384,14 @@ def merge_overlapping_boxes(boxes: list, iou: float = 0.01):
             intersections = [compute_iou(box, box2) if j != i else 1 for j, box2 in enumerate(boxes)]
             overlap = np.where(np.array(intersections) > iou)[0]
             not_overlap = np.where(np.array(intersections) <= iou)[0]
+            # import pdb; pdb.set_trace()
                 
             if len(overlap) <= 1:
                 continue
 
-            for over in overlap:
-                if over == i:
-                    continue
+            # for over in overlap:
+            #     if over == i:
+            #         continue
             
             overlapping = [boxes[idx] for idx in overlap]
             new_box = merge_all_boxes(np.array(overlapping))
@@ -322,12 +422,79 @@ def merge_near_boxes(boxes: list, proximity: float = 1.05):
     return boxes
 
 
+def resize_if_smaller(box: list, max_dims: tuple, min_size: tuple = (32,32)):
+    """[summary]
+
+    Args:
+        box (list): Bounding Box coordinates [left, top, right, bottom].
+        max_dims (tuple): Maximum size of x, y dimensions to max out new box coordinates.
+        min_size (tuple, optional): Resize box if it is smaller than min_size on any dimension. Defaults to (32,32).
+
+    Returns:
+        list: Bounding box coordinates of the new resized box [left, top, right, bottom].
+    """
+    # import pdb; pdb.set_trace()
+    if box[2]-box[0] > min_size[0] and box[3]-box[1] > min_size[1]:
+        return box
+
+    box_size = [
+        box[2]-box[0],
+        box[3]-box[1],
+    ]
+
+    new_size = [
+        max(min_size[0], box_size[0]),
+        max(min_size[1], box_size[1]),
+    ]
+
+    center = [
+        box[0]+(box[2]-box[0])/2,
+        box[1]+(box[3]-box[1])/2,
+    ]
+
+    offset = [
+        new_size[0]/2,
+        new_size[1]/2,
+    ]
+
+    new_box = [
+        int(center[0]-offset[0]),
+        int(center[1]-offset[1]),
+        int(center[0]+offset[0]),
+        int(center[1]+offset[1]),
+    ]
+
+    if new_box[0] < 0:
+        new_box[2] += abs(new_box[0])
+        new_box[0] = 0
+    if new_box[1] < 0:
+        new_box[3] += abs(new_box[1])
+        new_box[1] = 0
+    if new_box[2] >= max_dims[0]:
+        new_box[0] -= (abs(new_box[2]) - (max_dims[0]+1))
+        new_box[2] = max_dims[0]-1
+    if new_box[3] >= max_dims[1]:
+        new_box[1] -= (abs(new_box[3]) - (max_dims[1]+1))
+        new_box[3] = max_dims[1]-1
+
+    new_box = [
+        int(max(0, new_box[0])),
+        int(max(0, new_box[1])),
+        int(min(max_dims[0], new_box[2])),
+        int(min(max_dims[1], new_box[3])),
+    ]
+
+    return new_box
+
+
 def propose_rois(
     boxes: list,
     roi_width: int,
     roi_height: int,
     max_width: int,
-    max_height: int):
+    max_height: int,
+    roi_increment: float = None,
+    force_aspect: float = None):
     """Propose regions of interest of size at least (roi_width, roi_height).
     Coordinates are guaranteed to be between (0, 0) and (max_width, max_height) and keep aspect ratio.
 
@@ -337,6 +504,8 @@ def propose_rois(
         roi_height (int): Minimum height of the proposed RoIs.
         max_width (int): Maximum x coordinate of the proposed RoIs.
         max_height (int): Maximum y coordinate of the proposed RoIs.
+        roi_increment (float, optional): If set, resizes the resulting RoIs. Defaults to None.
+        force_aspect (float, optional): If set, forces the aspect ratio of the resulting RoIs. Defaults to None.
 
     Returns:
         list: list of regions proposed. Each is a tuple [xmin, ymin, xmax, ymax]
@@ -344,14 +513,15 @@ def propose_rois(
     roi_proposals = []
     boxes = np.array(boxes)
 
-    roi_ar = roi_width / roi_height
-
-    if len(boxes) > 1:
-        boxes = non_max_suppression_fast(boxes)
+    if force_aspect:
+        roi_ar = force_aspect
+    else:
+        roi_ar = roi_width / roi_height
 
     for box in boxes:
         width = box[2] - box[0]
         height = box[3] - box[1]
+    
         if width < roi_width and height < roi_height:
             new_roi = (roi_width, roi_height)
 
@@ -367,6 +537,12 @@ def propose_rois(
             new_roi = [
                 width,
                 height * (aspect/roi_ar),
+            ]
+
+        if roi_increment:
+            new_roi = [
+                new_roi[0]*roi_increment,
+                new_roi[1]*roi_increment,
             ]
 
         # Offset from the center of the box
@@ -387,8 +563,8 @@ def propose_rois(
 
         roi_proposals.append(box)
 
-    if len(roi_proposals) > 1:
-        roi_proposals = non_max_suppression_fast(np.array(roi_proposals))
+    # if len(roi_proposals) > 1:
+    #     roi_proposals = non_max_suppression_fast(np.array(roi_proposals))
 
     roi_proposals = merge_overlapping_boxes(roi_proposals, 0.05)
     return roi_proposals
@@ -432,4 +608,6 @@ def first_pass_bg(
         bg = background.background_color.copy()
         cv2.imwrite(output, bg)
 
+
+# def is_contained(big, small):
 
