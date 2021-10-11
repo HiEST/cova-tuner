@@ -1,0 +1,66 @@
+{
+    "globals": {
+        "aws_role": "arn:aws:iam::",
+        "s3_bucket": null,
+        "s3_prefix": "cova-test"
+    },
+    "capture": {
+        "plugin": "VideoCapture",
+        "plugin_path": "",
+        "args": {
+            "stream": "../../videos/castelloli.mp4",
+            "frameskip": 25,
+            "resize": [1280, 720]
+        }
+    },
+    "filter": {
+        "plugin": "FilterStatic",
+        "plugin_path": "",
+        "args": {
+            "warmup": 10
+        }
+    },
+    "annotate": {
+        "plugin": "AWSAnnotation",
+        "plugin_path": "",
+        "args": {
+            "aws_config": {
+                "role": "$globals#aws_role",
+                "instance_type": "ml.m4.xlarge"
+            },
+            "s3_config": {
+                "bucket": "$globals#s3_bucket",
+                "prefix": "$globals#s3_prefix"
+            }
+        }
+    },
+    "dataset": {
+        "plugin": "AWSDataset",
+        "plugin_path": "",
+        "args": {
+            "aws_config": {
+                "role": "$globals#aws_role",
+                "ecr_image": "[...].region.amazonaws.com/autotune:tfrecord",
+                "instance_type": "ml.m4.xlarge"
+            },
+            "s3_config": {
+                "bucket": "$globals#s3_bucket",
+                "prefix": "$globals#s3_prefix"
+            },
+            "dataset_config": {
+                "dataset_name": "bcn-nby-test",
+                "valid_classes": [
+                    "car", "person", "motorcycle",
+                    "bicycle", "truck", "bus"
+                ],
+                "min_score": 0.3
+            }
+        }
+    },
+    "train": {
+        "plugin": "DummyTrainer",
+        "args": {
+
+        }
+    }
+}
