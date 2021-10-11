@@ -67,12 +67,12 @@ class BackgroundCV(Background):
 
         self.kernel = np.ones((2, 2), np.uint8)
 
-        
+
     def update(self, frame):
-            self.background_color = None
-            self.mask = self.model.apply(frame)
-            self.mask = cv2.dilate(self.mask, self.kernel, iterations=2)
-            return self.mask
+        self.background_color = None
+        self.mask = self.model.apply(frame)
+        self.mask = cv2.dilate(self.mask, self.kernel, iterations=2)
+        return self.mask
 
         
     def getBackgroundImage(self):

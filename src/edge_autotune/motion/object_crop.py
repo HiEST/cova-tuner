@@ -52,7 +52,6 @@ class MergeHeuristic(Enum):
 
 def first_fit_decreasing(img, objects: list):
     # sort boxes based on area in decreasing order
-    # boxes.sort(key=lambda x: (x[2]-x[0])*(x[3]-x[1]), reverse=True)
     objects.sort(key=lambda x: x.area, reverse=True)
 
     max_dim = max([
@@ -80,11 +79,6 @@ def first_fit_decreasing(img, objects: list):
 
 def grid_fit_decreasing(objects: list, xlim: int):
     objects.sort(key=lambda x: x.area(), reverse=True)
-    # objects[0].inf_box = [
-    #     0, 0,
-    #     objects[0].width(),
-    #     objects[0].height()
-    # ]
 
     row_width = 0
     row_height = 0
@@ -150,9 +144,6 @@ def bin_packing(objects: list):
         # Make sure all objects have been packed
         assert objects_packed == (obj_id+1)
 
-
-    # import pdb; pdb.set_trace()
-    # packer.pack()
     for rect in packer[0]:
         objects[rect.rid].inf_box = [
             rect.x,
@@ -176,7 +167,6 @@ def merge(img, boxes: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
         'objects': None,
     }
 
-    # print(f'Trying to find solution with limit {xlim}.')
     while True:
         objects, img_shape = grid_fit_decreasing(objects, xlim)
         area = max(img_shape)*max(img_shape)  # img will be squared, so we compute area wrt larges dim
@@ -187,8 +177,6 @@ def merge(img, boxes: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
                 objects = prev_solution['objects']
                 img_shape = prev_solution['shape']
                 break
-            # else:
-                # print(f'Found NEW solution with area {area} vs {prev_solution["area"]}')
 
         prev_solution['shape'] = img_shape
         prev_solution['area'] = area
@@ -256,10 +244,6 @@ def combine_streams(frames, box_lists: list, heuristic=MergeHeuristic.FIRST_FIT_
 
 
 def combine_boxes(objects: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
-    # objects = []
-    # for list_id, boxes in enumerate(box_lists):
-    #     for box in boxes:
-    #         objects.append(MovingObject(list_id, 0, len(objects), box, []))
 
     xlim = math.sqrt(sum([obj.area() for obj in objects]))
     prev_solution = {
@@ -267,8 +251,6 @@ def combine_boxes(objects: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
         'shape': None,
         'objects': None,
     }
-
-    # print(f'Trying to find solution with limit {xlim}.')
 
     while True:
         objects, img_shape = grid_fit_decreasing(objects, xlim)
@@ -282,15 +264,12 @@ def combine_boxes(objects: list, heuristic=MergeHeuristic.FIRST_FIT_DECREASING):
                 objects = prev_solution['objects']
                 img_shape = prev_solution['shape']
                 break
-            # else:
-            #     print(f'Found NEW solution with area {area} vs {prev_solution["area"]}')
 
         prev_solution['shape'] = img_shape
         prev_solution['area'] = area
         prev_solution['objects'] = deepcopy(objects)
         # Try again with wider image
         xlim = max(img_shape)
-        # print(f'Found solution with area {area}. Trying again with limit {xlim}.')
 
     objects.sort(key=lambda x: x.obj_id)
     return objects, img_shape
@@ -307,47 +286,6 @@ def combine_border(frames: list, box_lists: list, border_size: int = 10, min_com
             objects.append(MovingObject(stream_id, 0, len(objects), box, [], border))
 
     objects, img_shape = combine_boxes(objects)
-    # img_size = [img_shape[1], img_shape[0]]
-    # resize_x = 1 if min_combined_size is None else max(1, min_combined_size[0]/img_size[0])
-    # resize_y = 1 if min_combined_size is None else max(1, min_combined_size[1]/img_size[1])
-
-    # new_size = [resize_x*img_size[0], resize_y*img_size[1]]
-    # # print(f'first new size: {new_size} ({resize_x} & {resize_y})')
-    # if new_size[0] < new_size[1]:
-    #     resize_x = new_size[1] / img_size[0]
-    # elif new_size[1] < new_size[0]:
-    #     resize_y = new_size[0] / img_size[1]
-
-    # if resize_x > 1 or resize_y > 1:
-    #     new_size = [int(resize_x*img_size[0]), int(resize_y*img_size[1])]
-    #     # TODO: Check if new boxes overlap between them. If so, merge them.
-        
-    #     for stream_id in range(len(frames)):
-    #         boxes = box_lists[stream_id]
-    #         new_boxes = []
-    #         for box in boxes:
-    #             new_w = int((box[2]-box[0])*resize_x)
-    #             new_h = int((box[3]-box[1])*resize_y)
-    #             box = resize_if_smaller(box, max_dims=max_dims, min_size=(new_w, new_h))
-    #             new_boxes.append(box)
-
-    #         new_boxes = merge_overlapping_boxes(new_boxes)
-
-    #         for box in new_boxes:
-    #             border = [border_size]*4
-    #             objects.append(MovingObject(stream_id, 0, len(objects), box, [], border))
-                
-    #     # print(f'Min combined size: {min_combined_size}')
-    #     # print(f'Resizing objects by {resize_x:.2f}, {resize_y:.2f}. From ({img_size}) to ({new_size})')
-    #     objects, img_shape = combine_boxes(objects)
-    #     # print(f'\tGot: {img_shape[1]}, {img_shape[0]}')
-    #         # obj.inf_box = [
-    #         #     int(obj.inf_box[0]*resize_x),
-    #         #     int(obj.inf_box[1]*resize_y),
-    #         #     int(obj.inf_box[2]*resize_x),
-    #         #     int(obj.inf_box[3]*resize_y),
-    #         # ]
-    #     # img_shape = (int(resize_x*img_shape[0]), int(resize_y*img_shape[1]))
 
     if img_shape[0] > img_shape[1]:
         img_shape = (img_shape[0], img_shape[0])
@@ -385,7 +323,6 @@ def combine_resize(frames: list, box_lists: list, roi_size: list = (100, 100), b
     for stream_id in range(len(frames)):
         boxes = box_lists[stream_id]
         for box in boxes:
-            # border = [border_size]*4
             border = [0]*4
             new_box = (0, 0) + roi_size
             objects.append(MovingObject(stream_id, 0, len(objects), new_box, [], border))
