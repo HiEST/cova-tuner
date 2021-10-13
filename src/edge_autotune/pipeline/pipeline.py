@@ -185,9 +185,8 @@ class COVAFilter(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def epilogue(self, *args, **kwargs) -> None:
-        """Processes all pending images, if any.
-        The images are sent to the server. Yields annotations."""
+    def epilogue(self) -> None:
+        """Processes all pending images, if any."""
         raise NotImplementedError
 
 

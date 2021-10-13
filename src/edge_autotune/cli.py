@@ -22,9 +22,14 @@ from edge_autotune.cli_helper import _run
 
 logger = logging.getLogger(__name__)
 
-def main():
-  parser = argparse.ArgumentParser(description='This program runs a COVA pipeline defined in a json-like config file.')
-  parser.add_argument('config', type=str, help='Path to a video or a sequence of image.')
 
-  args = parser.parse_args()
-  _run(args.config)
+def main():
+    parser = argparse.ArgumentParser(
+        description="This program runs a COVA pipeline defined in a json-like config file."
+    )
+    parser.add_argument(
+        "config", type=str, help="Path to a video or a sequence of image."
+    )
+
+    args = parser.parse_args()
+    _run(args.config)

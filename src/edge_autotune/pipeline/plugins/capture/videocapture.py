@@ -8,6 +8,7 @@ from edge_autotune.pipeline.pipeline import COVACapture
 
 
 class VideoCapture(COVACapture):
+    """Class implementing decoding as a COVACapture pipeline stage using OpenCV"""
     def __init__(self, stream: str, frameskip: int = 0, resize: Tuple[int, int] = None):
         self.cap = cv2.VideoCapture(stream)
         self.frameskip = frameskip + 1

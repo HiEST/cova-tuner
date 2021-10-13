@@ -100,13 +100,10 @@ def get_precision_recall(preds, gts, label):
         if match_id >= 0:
             if pred['label'] == gts.iloc[match_id]['label']:
                 TP += 1
-                # draw_detection(frame, box, pred['label'], color=(0,255,0))
             else:
                 FP += 1
-                # draw_detection(frame, box, pred['label'], color=(0,255,255))
         else:
             FP += 1
-            # draw_detection(frame, box, pred['label'], color=(0,0,255))
     
     FN = len(gts) - TP
 
