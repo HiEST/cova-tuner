@@ -25,11 +25,11 @@ class AWSDataset(COVADataset):
 
         Args:
             aws_config (dict):
-                dictionary containing all necessary information to connect and use to AWS services.
-            valid_classes (list[str]):
-                list of valid labels to be included in the generated dataset.
-            min_score (float):
-                minimum score (confidence) of annotations to be considered for the dataset.
+                dictionary containing all necessary information to connect to and use AWS services.
+            s3_config (dict):
+                dictionary containing all necessary information to connect to and use S3 storage.
+            dataset_config (float):
+                dictionary containing the configuration for the dataset creation.
         """
 
         self.aws_config = aws_config
