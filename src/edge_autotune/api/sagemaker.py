@@ -75,7 +75,15 @@ class ModelPackageArnProvider:
         return mapping[current_region]
 
 
-def deploy_model(role, num_instances, model_arn, instance_type, model_name, output_path, max_concurrent_transforms=2):
+def deploy_model(
+    role,
+    num_instances,
+    model_arn,
+    instance_type,
+    model_name,
+    output_path,
+    max_concurrent_transforms=2,
+):
     model = ModelPackage(
         role=role, model_package_arn=model_arn, sagemaker_session=sagemaker.Session()
     )
@@ -84,7 +92,8 @@ def deploy_model(role, num_instances, model_arn, instance_type, model_name, outp
         instance_count=num_instances,
         instance_type=instance_type,
         output_path=output_path,
-        max_concurrent_transforms=max_concurrent_transforms)
+        max_concurrent_transforms=max_concurrent_transforms,
+    )
 
     return model, transformer
 
@@ -96,7 +105,7 @@ def batch_transform(data, transformer, batch_output, content_type):
         data_type="S3Prefix",
         content_type=content_type,
         input_filter="$",
-        join_source= "None",
+        join_source="None",
         output_filter="$",
     )
     ts_create = time.time() - ts0
@@ -104,7 +113,9 @@ def batch_transform(data, transformer, batch_output, content_type):
     ts0 = time.time()
     transformer.wait()
     ts_exec = time.time() - ts0
-    logger.info(f'Batch Transform job created in {ts_create:.2f} seconds and executed in {ts_exec:.2f} seconds.')
+    logger.info(
+        f"Batch Transform job created in {ts_create:.2f} seconds and executed in {ts_exec:.2f} seconds."
+    )
 
     assert batch_output == transformer.output_path
     output = transformer.output_path
@@ -112,7 +123,9 @@ def batch_transform(data, transformer, batch_output, content_type):
     return output
 
 
-def invoke_DL_endpoint(image_path, runtime, endpoint_name, content_type="image/png", bounding_box="no"):
+def invoke_DL_endpoint(
+    image_path, runtime, endpoint_name, content_type="image/png", bounding_box="no"
+):
     img = open(image_path, "rb").read()
 
     response = runtime.invoke_endpoint(
