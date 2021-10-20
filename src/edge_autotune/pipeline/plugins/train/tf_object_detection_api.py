@@ -4,37 +4,35 @@ from edge_autotune.pipeline.pipeline import COVATrain
 from edge_autotune.dnn import train
 
 
-class ObjectDetectionAPI(COVATrain):
-    def __init__(self):
-        """Inits an ObjectDetectionAPI object. """
-        pass
+class TFObjectDetectionAPI(COVATrain):
+    """Class implenting COVATrain using TensorFlow's Object Detection API"""
 
-    def train(self, checkpoint: str, dataset: str, config: str,
-             output_dir: str, label_map: str, train_steps: int = 1000):
-        """Start fine-tuning from base model's checkpoint.
+    def __init__(self, config: dict):
+        """Constructs a TFObjectDetectionAPI object
+
         Args:
-            checkpoint (str): Path to directory containing the checkpoint to use as base model.
-            dataset (str): Path to the training dataset TFRecord file.
-            config (str): Path to the pipeline.config file with the training config.
-            output (str): Path to the output directory.
-            train_steps (int, optional): Number of training steps. Defaults to 1000.
+            config (dict):
+                dictionary containing the training's configuration.
         """
 
-        train_datasets = dataset.split(',')
+        self.config = config
+
+
+    def train(self):
+        """Start fine-tuning from base model's checkpoint."""
+
+        train_datasets = self.config['dataset'].split(',')
         train.train_loop_wrapper(
-            pipeline_config=config,
+            pipeline_config=self.config['config'],
             train_datasets=train_datasets,
-            model_dir=output_dir,
-            base_model=checkpoint,
-            label_map=label_map,
-            num_train_steps=train_steps
+            model_dir=self.config['output_dir'],
+            base_model=self.config['checkpoint'],
+            label_map=self.config['label_map'],
+            num_train_steps=self.config['train_steps']
         )
 
         train.export_trained_model(
-            pipeline_config_path=config,
-            trained_checkpoint_dir=output_dir,
-            output_dir=f'{output_dir}/saved_model'
+            pipeline_config_path=self.config['config'],
+            trained_checkpoint_dir=self.config['output_dir'],
+            output_dir=f"{self.config['output_dir']}/saved_model"
         )
-
-    def epilogue(self) -> None:
-        pass
