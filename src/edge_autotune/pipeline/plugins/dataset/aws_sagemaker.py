@@ -126,14 +126,18 @@ class AWSDataset(COVADataset):
 
                 manifest_entries.append(json.dumps(img_dict))
 
+        # import pdb; pdb.set_trace()
         with io.BytesIO() as manifest_file:
             manifest_file.write(str.encode("\n".join(manifest_entries)))
             manifest_file.seek(0)
 
             self.s3_config["manifest"] = os.path.join(
+                self.s3_config["images_prefix"], "manifest.json"
+            )
+            self.s3_config["manifest_full"] = os.path.join(
                 's3://',
                 self.s3_config['bucket'],
-                self.s3_config["annotations_prefix"], "manifest.json"
+                self.s3_config["manifest"],
             )
             self.s3_config["client"].upload_fileobj(
                 manifest_file, self.s3_config["bucket"], self.s3_config["manifest"]
@@ -174,7 +178,7 @@ class AWSDataset(COVADataset):
             inputs=[
                 ProcessingInput(
                     input_name="input",
-                    source=self.s3_config["manifest"],
+                    source=self.s3_config["images_full"],
                     destination=input_folder,
                 )
             ],
