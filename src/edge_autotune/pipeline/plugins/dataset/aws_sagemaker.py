@@ -9,7 +9,9 @@ from pathlib import Path
 import time
 
 import boto3
+import sagemaker
 from sagemaker.processing import Processor, ProcessingInput, ProcessingOutput
+
 
 from edge_autotune.pipeline.pipeline import COVADataset
 
@@ -25,16 +27,20 @@ class AWSDataset(COVADataset):
 
         Args:
             aws_config (dict):
-                dictionary containing all necessary information to connect and use to AWS services.
-            valid_classes (list[str]):
-                list of valid labels to be included in the generated dataset.
-            min_score (float):
-                minimum score (confidence) of annotations to be considered for the dataset.
+                dictionary containing all necessary information to connect to and use AWS services.
+            s3_config (dict):
+                dictionary containing all necessary information to connect to and use S3 storage.
+            dataset_config (float):
+                dictionary containing the configuration for the dataset creation.
         """
 
         self.aws_config = aws_config
         self.s3_config = s3_config
         self.s3_config["client"] = boto3.client("s3")
+        s3_bucket = self.s3_config.get('bucket', None)
+        if s3_bucket in [None, '']:
+            s3_bucket = sagemaker.Session().default_bucket()
+        self.s3_config['bucket'] = s3_bucket
 
         self.dataset_config = dataset_config
         self.dataset_destination = os.path.join(
@@ -64,9 +70,14 @@ class AWSDataset(COVADataset):
         dataset_name = self.dataset_config["dataset_name"]
 
         manifest_entries = []
-        s3_objects = self.s3_config["client"].list_objects_v2(
-            Bucket=self.s3_config["bucket"], Prefix=self.s3_config["annotations_prefix"]
-        )["Contents"]
+        s3_objects = [
+            data
+            for data in self.s3_config["client"].list_objects_v2(
+                    Bucket=self.s3_config["bucket"], Prefix=self.s3_config["annotations_prefix"]
+                )["Contents"]
+            if data["Key"][-4:] == '.out'
+        ]
+
         for obj in s3_objects:
             _, filename = os.path.split(obj["Key"])
             with io.BytesIO() as annotations_file:
@@ -78,7 +89,7 @@ class AWSDataset(COVADataset):
                 annotations = json.load(annotations_file)
                 img_dict = {
                     "source-ref": f"s3://{self.s3_config['bucket']}/"
-                    f"{self.s3_config['imgs_prefix']}/{Path(filename).stem}",
+                    f"{self.s3_config['images_prefix']}/{Path(filename).stem}",
                     dataset_name: {},
                 }
                 img_dict[dataset_name]["annotations"] = []
@@ -115,12 +126,13 @@ class AWSDataset(COVADataset):
 
                 manifest_entries.append(json.dumps(img_dict))
 
-        # with open('/tmp/manifest.json', 'w') as manifest_file:
         with io.BytesIO() as manifest_file:
-            manifest_file.write("\n".join(manifest_entries))
+            manifest_file.write(str.encode("\n".join(manifest_entries)))
             manifest_file.seek(0)
 
             self.s3_config["manifest"] = os.path.join(
+                's3://',
+                self.s3_config['bucket'],
                 self.s3_config["annotations_prefix"], "manifest.json"
             )
             self.s3_config["client"].upload_fileobj(
@@ -157,6 +169,7 @@ class AWSDataset(COVADataset):
                 "--ground_truth_manifest={}".format(ground_truth_manifest),
                 "--label_map={}".format(label_map),
                 "--output={}".format(output_folder),
+                "--dataset-name={}".format(self.dataset_config["dataset_name"]),
             ],
             inputs=[
                 ProcessingInput(

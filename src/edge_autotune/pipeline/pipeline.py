@@ -18,6 +18,7 @@ CONSTRUCTORS = ['COVACapture', 'COVAFilter', 'COVAAnnotate', 'COVADataset', 'COV
 
 
 class COVAFactory:
+    """Factory class to load and get COVA plugins."""
     def __init__(self):
         self._plugins_by_class = {}
         self._plugins_by_module = {}
@@ -127,6 +128,12 @@ class COVAAutoTune(COVAPipeline):
         self.pipeline = {}
 
     def load_pipeline(self, pipeline_config: dict) -> None:
+        """Loads a pipeline as defined in the input dictionary pipeline_config,
+        which the configuration for each stage defined in the pipeline.
+
+        Args:
+            pipeline_config (dict): configuration of each of the pipeline's stages.
+        """
 
         for stage, config in pipeline_config.items():
             if config.get('plugin_path', None):
@@ -142,12 +149,12 @@ class COVAAutoTune(COVAPipeline):
             sys.exit(1)
 
     def run(self):
+        """Runs the COVA pipeline."""
         while True:
             ret, frame = self.pipeline['capture'].capture()
             if not ret:
                 break
-            print(frame.shape)
-        
+
             filtered = self.pipeline['filter'].filter(frame)
 
             if len(filtered) == 0:
@@ -175,8 +182,7 @@ class COVACapture(ABC):
         raise NotImplementedError
 
     def epilogue(self) -> None:
-        raise NotImplementedError
-
+        pass
 
 class COVAFilter(ABC):
     @abstractmethod
@@ -184,10 +190,8 @@ class COVAFilter(ABC):
         """Processes one image."""
         raise NotImplementedError
 
-    @abstractmethod
     def epilogue(self) -> None:
-        """Processes all pending images, if any."""
-        raise NotImplementedError
+        pass
 
 
 class COVAAnnotate(ABC):
@@ -196,11 +200,8 @@ class COVAAnnotate(ABC):
         """Processes one image."""
         raise NotImplementedError
 
-    @abstractmethod
-    def epilogue(self, *args, **kwargs) -> None:
-        """Processes all pending images, if any.
-        The images are sent to the server. Yields annotations."""
-        raise NotImplementedError
+    def epilogue(self) -> None:
+        pass
 
 
 class COVADataset(ABC):
@@ -209,21 +210,19 @@ class COVADataset(ABC):
         """Processes one image."""
         raise NotImplementedError
 
-    @abstractmethod
-    def epilogue(self, *args, **kwargs) -> None:
-        """Processes all pending images, if any.
-        The images are sent to the server. Yields annotations."""
-        raise NotImplementedError
+    def epilogue(self) -> None:
+        pass
 
 
 class COVATrain(ABC):
     @abstractmethod
     def train(self) -> None:
-        """Processes one image."""
+        """Abstract method for starting the training.
+
+        Raises:
+            NotImplementedError
+        """
         raise NotImplementedError
 
-    @abstractmethod
-    def epilogue(self, *args, **kwargs) -> None:
-        """Processes all pending images, if any.
-        The images are sent to the server. Yields annotations."""
-        raise NotImplementedError
+    def epilogue(self) -> None:
+        pass
