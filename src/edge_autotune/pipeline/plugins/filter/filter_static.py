@@ -2,6 +2,7 @@
 Uses default parameters for motion detection."""
 
 import numpy as np
+from typing import List
 
 from edge_autotune.pipeline.pipeline import COVAFilter
 from edge_autotune.motion.motion_detector import BackgroundCV, MotionDetector
@@ -15,7 +16,7 @@ class FilterStatic(COVAFilter):
         self.warmup = warmup
         self.processed_frames = 0
 
-    def filter(self, img: np.ndarray) -> list[np.ndarray]:
+    def filter(self, img: np.ndarray) -> List[np.ndarray]:
         """Filters the input image using motion detection.
 
         Args:

@@ -27,7 +27,7 @@ class SageMakerTrain(COVATrain):
         self.train_config['sample_1_of_n_eval_examples'] = train_config.get('sample_1_of_n_eval_examples', 1)
         
         self.train_config['tensorboard_output_config'] = None
-        if train_config.get('tensorboard_prefix', None) is not None:       
+        if train_config.get('tensorboard_prefix', None) is not None:
             self.train_config['tensorboard_output_config'] = TensorBoardOutputConfig(
                 s3_output_path=self.train_config['tensorboard_prefix'],
             )
