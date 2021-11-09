@@ -30,6 +30,7 @@ class SageMakerTrain(COVATrain):
         if train_config.get('tensorboard_prefix', None) is not None:
             self.train_config['tensorboard_output_config'] = TensorBoardOutputConfig(
                 s3_output_path=self.train_config['tensorboard_prefix'],
+                container_local_output_path='/opt/training/',
             )
 
     def train(self, dataset_path: str):

@@ -44,7 +44,7 @@ class AWSDataset(COVADataset):
 
         self.dataset_config = dataset_config
         self.dataset_destination = os.path.join(
-            "s3://",
+            # "s3://",
             self.s3_config["bucket"],
             "dataset",
             "{}.record".format(self.dataset_config["dataset_name"]),
@@ -178,7 +178,7 @@ class AWSDataset(COVADataset):
             inputs=[
                 ProcessingInput(
                     input_name="input",
-                    source=self.s3_config["images_full"],
+                    source=self.s3_config["images_prefix"],
                     destination=input_folder,
                 )
             ],
