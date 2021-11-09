@@ -19,45 +19,43 @@
 
 <p align="center">
   <a href="#quickstart">Quickstart</a> •
-  <a href="#basic-usage">How To Use</a> •
+  <a href="#basic-usage">Basic Usage</a> •
   <a href="#installation">Installation</a> •
   <a href="#how-does-it-work">How Does It Work?</a>
 </p>
 
-## Quickstart
+# Quickstart
 Edge AutoTune provides a series of tools aimed at assisting with a rapid deployment of CNN models for video analytics in edge cloud locations. It automates every step of the pipeline, from the creation of the dataset using images from the edge cameras, the _tuning_ of a generic model, all the way to the deployment of the _specialized_ model.
 
 Edge AutoTune takes one _edge_ model, one _groundtruth_ model, and a video stream as inputs and generates and _deploys_ a fine-tuned version of the _edge_ model specifically optimized for the specifics of the edge camera.
 
 Edge AutoTune brings a series of techniques together that work best when used on images from static cameras. Moreover, it assumes that the _groundtruth_ model has been trained on the classes we want the _edge_ model to detect, although more than one _groundtruth_ model can be used for this purpose.
 
-### Citation
-If you use Edge AutoTuner for your research please cite our [preprint](http://arxiv.org/abs/2104.06826): 
+## Basic Usage
+Edge AutoTune executes a pipeline defined in a _json_ config file. In `examples/config.template.json` you can find an example to start with.
 
-> Rivas, Daniel, Francesc Guim, Jordà Polo, Josep Ll Berral, Pubudu M. Silva, and David Carrera. “Towards Unsupervised Fine-Tuning for Edge Video Analytics.” ArXiv:2104.06826 [Cs, Eess], April 14, 2021. http://arxiv.org/abs/2104.06826.
-
-## How To Use
-Edge AutoTune provides multiple tools that are accessible from the command-line interface. 
-The typical flow is start server with `server`, create training dataset with `capture`, fine-tune model with `tune`, and deploy with `deploy`.
+To start the Edge AutoTune, simply pass the path to the configuration file with the following command:
 
 ```console
-foo@bar:~$ edge_autotune --help
-Usage: edge_autotune [OPTIONS] COMMAND [ARGS]...
-
-  CLI for edge_autotune.
-
-Options:
-  --version  Show the version and exit.
-  --help     Show this message and exit.
-
-Commands:
-  server    Start annotation server.
-  capture   Capture and annotate images from stream and generate dataset.
-  tune      Start fine-tuning from base model's checkpoint.
-  deploy    Start client for inference using the tuned model.
+foo@bar:~$ edge_autotune config.json
 ```
 
-## Installation
+
+To show the command-line help:
+```console
+foo@bar:~$ edge_autotune --help
+usage: edge_autotune [-h] config
+
+This program runs a COVA pipeline defined in a json-like config file.
+
+positional arguments:
+  config      Path to the configuration file.
+
+optional arguments:
+  -h, --help  show this help message and exit
+```
+
+# Installation
 
 <!--
 <p align="center">
@@ -96,7 +94,7 @@ cd edgeautotuner
 python -m pip install -e .
 ```
 
-### Requirements:
+## Requirements:
 Edge AutoTune works with Python >=3.6 and uses the following packages:
 ```
 - tensorflow>=2.4.1
@@ -106,19 +104,136 @@ Edge AutoTune works with Python >=3.6 and uses the following packages:
 - pandas
 - flask
 - flask-restful
-- tqdm
 ```
 
 CUDA is not a requirement to run. However, for the fine-tuning step, it is recommended to use a machine with a GPU installed and CUDA support.
  
 - Download edge and groundtruth model's checkpoint from Tensorflow Model Zoo. 
-There is no restriction in what models to use but in our experiments we have used the following:
+There is no restriction in what models to use. However, we have used the following models in our experiments:
 >  **Edge**: [MobileNet V2 320x320](http://download.tensorflow.org/models/object_detection/tf2/20200711/ssd_mobilenet_v2_320x320_coco17_tpu-8.tar.gz)
 
 > **Reference**: [EfficientDet D2 768x768](http://download.tensorflow.org/models/object_detection/tf2/20200711/faster_rcnn_inception_resnet_v2_1024x1024_coco17_tpu-8.tar.gz)
 
 
-## How does it work?
+# Documentation
+
+Edge AutoTune works by executing a user-defined pipeline. Each stage of the pipeline is, ideally, independent from the others. Pipeline stages are implemented using a plugin architecture to makes it easy to extend or modify the default behaviour.
+
+By default, COVA defines the following pipeline:
+
+![cova-pipeline](https://user-images.githubusercontent.com/11491836/140907656-8d90d7a4-19ec-4b84-9119-a32687d19f61.png)
+
+Therefore, it expects the following stages to be defined in the configuration file.
+
+1. *Capture*. This stage is retrieves images. Usually from a video or stream but can be extended to use other methods, such as images from disk. It is expected to return the next image to process.
+2. *Filter*. This stage filters the images captured. For example, perform motion detection on the captured images to filter static frames out. It is expected to return a list of images.
+3. *Annotate*. This stage annotates the images filtered. It is expected to return a path to the list of annotations.
+4. *Dataset*. This stage creates the dataset. By default, the dataset is generated in [_TFRecord_](https://www.tensorflow.org/tutorials/load_data/tfrecord) format. It is expected to return the path where the dataset was stored.
+5. *Train*. This stage starts training using the dataset generated at the previous stage. It is expected to return the path where the artifacts of the trained model were stored. 
+
+
+## Pipeline
+
+The pipeline, as the sequence of stages, is defined in the _COVAPipeline_ class. This class can be inherited to re-defined the default pipeline. Each stage must inherit its corresponding abstract class.
+
+The default plugins can be found in `src/edge_autotune/pipeline/plugins/`. However, the config file allows to pass the path where the plugin for a specific stage can be found.
+All parameters of every plugin can be defined in the configuration file.
+
+
+### Capture
+
+#### 1. Dummy
+Does nothing but return an 100x100x3 matrix filled with zeros.
+
+#### 2. VideoCapture
+Captures images using _OpenCV_'s _VideoCapture_ class.
+
+Parameters:
+- stream (_str_). Path or url of the stream from which images are captured.
+- frameskip (_int_). Frames to skip between frame and frame. Defaults to 0.
+- resize (_Tuple[int,int]_). Resize captured images to specific resolution. Defaults to None (images not resized).
+
+### Filter
+
+#### 1. Dummy
+Does nothing. Always return input inside a list without any filtering.
+
+#### 2. Filter Static
+Filters static frames out. Performs motion detection on the input images. If motion is detected, returns the input image in a list. Otherwise, returns an empty list.
+
+Parameters:
+- warmup (_int_). Number of frames used to warmup the motion detector to build its background model.
+
+
+### Annotate
+
+#### 1. Dummy
+Does nothing.
+
+#### 2. AWSAnnotation
+Uses _Amazon Web Services_ for the annotation process. Images are uploaded to S3 and annotated using a _BatchTransform_ job in _AWS_ _SageMaker_. 
+
+Parameters:
+- aws_config (_dict_). Contains the configuration required to use AWS' SageMaker service.
+  The dictionary is expected to contain the following information:
+    - _role_: *Required*.
+    - _instance_type_: ml.m4.xlarge
+    - _instance_count_: 1
+    - _max_concurrent_transforms_: 4
+    - _content_type_: image/png
+    - _region_: eu-west-1
+    - _model_name_: yolov3
+    - _endpoint_name_: {model_name}-gt-endpoint
+
+- s3_config (_dict_). Contains the configuration required to use S3.
+  The dictionary is expected to contain the following information:
+    - _bucket_: *Required*
+    - _prefix_: *Required*
+    - _images_prefix_: {_prefix_}/images
+    - _annotations_prefix_: {_prefix_}/annotations
+
+
+#### 3. FlaskAnnotator
+Uses the built-in annotation API
+
+### Dataset
+
+#### 1. AWSDataset
+Uses _AWS SageMaker_ to create the dataset in _TFRecord_ format.
+
+Parameters:
+- aws_config (_dict_). Contains the configuration required to use AWS' SageMaker service.
+  The dictionary is expected to contain the following information:
+    - _role_: *Required*.
+    - _ecr_image_: *Required*
+    - _instance_type_: ml.m4.xlarge
+- s3_config (_dict_). Contains the configuration required to use S3.
+  The dictionary is expected to contain the following information:
+    - _bucket_: *Required*
+    - _prefix_: *Required*
+- dataset_config (_dict_). Contains the configuration required to use S3.
+  The dictionary is expected to contain the following information:
+   - _dataset_name_: *Required*
+
+
+### Train
+
+#### 1. Dummy 
+Does nothing.
+
+
+#### 2. SageMakerTrain
+Uses _AWS SageMaker_ to train an object detection model.
+
+
+#### 3. TFObjectDetectionAPI
+Uses TensorFlow's Object Detection API to train a model locally.
+Parameters:
+- config (_dict_). Contains the configuration required to use AWS' SageMaker service.
+  The dictionary is expected to contain the following information:
+    - _role_: *Required*.
+
+## Internal
 Edge AutoTune is composed of multiple modules implementing different ideas and approaches. This project is the result of an thorough exploration to optimize video analytics in the context of resource-constrained edge nodes. However, two ideas stand out from the rest and are based on the assumption of static cameras:
 
 1. Overfitting the context (model specialization)
@@ -128,7 +243,7 @@ When working with static cameras, it is common for the scene to be mostly _stati
 
 The key contribution of Edge AutoTune is that it takes this observation and uses it to improve the prediction results on different _key_ parts of the pipeline: annotation (groundtruth model further improves the quality of the resulting training dataset), deployment (specialized model is tuned for the specific context of the camera where it is deployed).
 
-## Overfitting the Context (model specialization)
+### Overfitting the Context (model specialization)
 We define the context of a camera as the set of characteristics -- environmental, or technical -- that have a say in the composition of the scene, which will ultimately impact the model's accuracy. These are all characteristics that do not change over time or, if they do, do not change _short-term_. Otherwise, they would not be part of the context but another feature.
 
 For example, location (images from a highway or a mall?), the type of objects seen (a camera in a Formula 1 circuit will certainly get to see more _exclusive_ cars than a camera installed at a regular toll), focal distance (how big or small are objects with respect to the background), and even height at which the camera is installed (are objects seen from above, ground-level, or below?). These are all characteristics considered to be part of a camera's context, as they all conform the composition of the scene and the way the model experiences the scene.
@@ -221,3 +336,7 @@ Moreover, we observe how a small square in the background is consitently and mis
 These numbers highlight the incapacity of the edge model, with an input size of 300x300x3, to distinguish objects that represent only a small portion of the total frame. Thanks to the region proposal using motion detection, the edge model does not only boost its confidence on its detections but also dramatically reduce its error rate.    
 
 
+# Citation
+If you use Edge AutoTuner for your research please cite our [preprint](http://arxiv.org/abs/2104.06826): 
+
+> Rivas, Daniel, Francesc Guim, Jordà Polo, Josep Ll Berral, Pubudu M. Silva, and David Carrera. “Towards Unsupervised Fine-Tuning for Edge Video Analytics.” ArXiv:2104.06826 [Cs, Eess], April 14, 2021. http://arxiv.org/abs/2104.06826.
