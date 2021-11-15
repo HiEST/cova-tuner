@@ -3,6 +3,7 @@
 import json
 import logging
 from pathlib import Path
+from typing import Dict
 
 
 from edge_autotune.pipeline.pipeline import COVAAutoTune
@@ -12,7 +13,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level="INFO")
 
 
-def parse_config(config_file):
+def parse_config(config_file: str) -> Dict:
     """Parses config file with pipeline definition.
 
     Args:
@@ -29,6 +30,9 @@ def parse_config(config_file):
     if global_definitions is None:
         return config
 
+    single_stage = global_definitions.get("single_stage", "")
+    stage_config = global_definitions.get("stage_params", [])
+
     for key, value in global_definitions.items():
         subst_str = "$globals#{}".format(key)
         if subst_str in config_str:
@@ -38,7 +42,7 @@ def parse_config(config_file):
 
     config = json.loads(config_str)
     _ = config.pop("globals", None)
-    return config
+    return config, [single_stage, stage_config]
 
 
 def _run(config_file: str) -> None:
@@ -47,8 +51,17 @@ def _run(config_file: str) -> None:
     Args:
         config_file (str): path to the config file (json format) with the pipeline configuration.
     """
-    config = parse_config(config_file)
-
+    config, (single_stage, stage_config) = parse_config(config_file)
+    
     auto_tuner = COVAAutoTune()
-    auto_tuner.load_pipeline(config)
-    auto_tuner.run()
+    auto_tuner.load_pipeline(config, single_stage)
+
+    if single_stage == '':
+        auto_tuner.run()
+    else:
+        logger.info(
+            "Executing single stage %s with parameters %s",
+            single_stage,
+            ", ".join(stage_config),
+        )
+        auto_tuner.run_stage(single_stage, stage_config)

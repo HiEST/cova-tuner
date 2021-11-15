@@ -15,7 +15,6 @@ later, but that will cause problems--the code will get executed twice:
 
 import argparse
 import logging
-from typing import Tuple
 
 from edge_autotune.cli_helper import _run
 
@@ -23,13 +22,18 @@ from edge_autotune.cli_helper import _run
 logger = logging.getLogger(__name__)
 
 
-def main():
+def get_args():
     parser = argparse.ArgumentParser(
         description="This program runs a COVA pipeline defined in a json-like config file."
     )
     parser.add_argument(
-        "config", type=str, help="Path to a video or a sequence of image."
+        "config", type=str, help="Path to the configuration file."
     )
 
+    return parser
+
+
+def main():
+    parser = get_args()
     args = parser.parse_args()
     _run(args.config)
