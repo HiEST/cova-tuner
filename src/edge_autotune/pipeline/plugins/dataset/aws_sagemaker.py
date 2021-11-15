@@ -47,13 +47,15 @@ class AWSDataset(COVADataset):
             self.s3_config["prefix"],
             self.dataset_config["dataset_dir"],
         )
-        self.dataset_config["save_to"] = os.path.join(
+
+        self.dataset_config["dataset_destination"] = os.path.join(
+            's3://',
             self.s3_config["bucket"],
             self.dataset_config["dataset_prefix"],
-            "{}.record".format(self.dataset_config["dataset_name"]),
+            # "{}.record".format(self.dataset_config["dataset_name"]),
         )
 
-        logging.info("Dataset will be saved to %s", self.dataset_config["save_to"])
+        logging.info("Dataset will be saved to %s", self.dataset_config["dataset_destination"])
 
     def generate(self, images_path: str, annotations_path: str) -> str:
         """Generates dataset in TFRecord format and leaves it in an S3 bucket"""
@@ -78,7 +80,7 @@ class AWSDataset(COVADataset):
 
         self.generate_manifest()
         self.generate_tfrecord()
-        return self.dataset_config["save_to"]
+        return self.dataset_config["dataset_destination"]
 
     # TODO: This should probably run in the Cloud.
     def generate_manifest(self) -> None:
@@ -125,8 +127,11 @@ class AWSDataset(COVADataset):
                     ann_dict["class_id"] = class_id
                     ann_dict["top"] = ann["top"]
                     ann_dict["left"] = ann["left"]
+                    ann_dict["bottom"] = ann["bottom"]
+                    ann_dict["right"] = ann["right"]
                     ann_dict["width"] = ann["right"] - ann["left"]
-                    ann_dict["height"] = ann["top"] - ann["bottom"]
+                    ann_dict["height"] = ann["bottom"] - ann["top"]
+                    ann_dict["score"] = float(ann["score"])
 
                     img_dict[dataset_name]["annotations"].append(ann_dict)
 
@@ -206,7 +211,7 @@ class AWSDataset(COVADataset):
                 ProcessingOutput(
                     output_name="tfrecords",
                     source=output_folder,
-                    destination=self.dataset_config["save_to"],
+                    destination=self.dataset_config["dataset_destination"],
                 )
             ],
         )
