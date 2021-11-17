@@ -37,31 +37,50 @@ class AWSDataset(COVADataset):
         self.aws_config = aws_config
         self.s3_config = s3_config
         self.s3_config["client"] = boto3.client("s3")
-        s3_bucket = self.s3_config.get('bucket', None)
-        if s3_bucket in [None, '']:
+        s3_bucket = self.s3_config.get("bucket", None)
+        if s3_bucket in [None, ""]:
             s3_bucket = sagemaker.Session().default_bucket()
-        self.s3_config['bucket'] = s3_bucket
+        self.s3_config["bucket"] = s3_bucket
 
         self.dataset_config = dataset_config
-        self.dataset_destination = os.path.join(
-            "s3://",
-            self.s3_config["bucket"],
-            "dataset",
-            "{}.record".format(self.dataset_config["dataset_name"]),
+        self.dataset_config["dataset_prefix"] = os.path.join(
+            self.s3_config["prefix"],
+            self.dataset_config["dataset_dir"],
         )
+
+        self.dataset_config["dataset_destination"] = os.path.join(
+            's3://',
+            self.s3_config["bucket"],
+            self.dataset_config["dataset_prefix"],
+            # "{}.record".format(self.dataset_config["dataset_name"]),
+        )
+
+        logging.info("Dataset will be saved to %s", self.dataset_config["dataset_destination"])
 
     def generate(self, images_path: str, annotations_path: str) -> str:
         """Generates dataset in TFRecord format and leaves it in an S3 bucket"""
-        assert "s3://" in images_path and "s3://" in annotations_path
-        self.s3_config["images_full"] = images_path
-        self.s3_config["images_prefix"] = "/".join(images_path.split("/")[3:])
 
-        self.s3_config["annotations_full"] = annotations_path
-        self.s3_config["annotations_prefix"] = "/".join(annotations_path.split("/")[3:])
+        if "s3:" not in images_path:
+            raise ValueError("Use full s3 URI path for images.")
+        if "s3:" not in annotations_path:
+            raise ValueError("Use full s3 URI path for annotations.")
+
+        self.s3_config["s3_images"] = images_path
+        images_path_parts = Path(images_path).parts
+        bucket_index = images_path_parts.index(self.s3_config["bucket"])
+        self.s3_config["images_prefix"] = "/".join(
+            images_path_parts[bucket_index + 1 :]
+        )
+
+        annotations_path_parts = Path(annotations_path).parts
+        bucket_index = annotations_path_parts.index(self.s3_config["bucket"])
+        self.s3_config["annotations_prefix"] = "/".join(
+            annotations_path_parts[bucket_index + 1 :]
+        )
 
         self.generate_manifest()
         self.generate_tfrecord()
-        return self.dataset_destination
+        return self.dataset_config["dataset_destination"]
 
     # TODO: This should probably run in the Cloud.
     def generate_manifest(self) -> None:
@@ -73,9 +92,10 @@ class AWSDataset(COVADataset):
         s3_objects = [
             data
             for data in self.s3_config["client"].list_objects_v2(
-                    Bucket=self.s3_config["bucket"], Prefix=self.s3_config["annotations_prefix"]
-                )["Contents"]
-            if data["Key"][-4:] == '.out'
+                Bucket=self.s3_config["bucket"],
+                Prefix=self.s3_config["annotations_prefix"],
+            )["Contents"]
+            if data["Key"][-4:] == ".out"
         ]
 
         for obj in s3_objects:
@@ -107,8 +127,11 @@ class AWSDataset(COVADataset):
                     ann_dict["class_id"] = class_id
                     ann_dict["top"] = ann["top"]
                     ann_dict["left"] = ann["left"]
+                    ann_dict["bottom"] = ann["bottom"]
+                    ann_dict["right"] = ann["right"]
                     ann_dict["width"] = ann["right"] - ann["left"]
-                    ann_dict["height"] = ann["top"] - ann["bottom"]
+                    ann_dict["height"] = ann["bottom"] - ann["top"]
+                    ann_dict["score"] = float(ann["score"])
 
                     img_dict[dataset_name]["annotations"].append(ann_dict)
 
@@ -130,13 +153,19 @@ class AWSDataset(COVADataset):
             manifest_file.write(str.encode("\n".join(manifest_entries)))
             manifest_file.seek(0)
 
-            self.s3_config["manifest"] = os.path.join(
-                's3://',
-                self.s3_config['bucket'],
-                self.s3_config["annotations_prefix"], "manifest.json"
+            self.dataset_config["manifest_prefix"] = os.path.join(
+                self.s3_config["images_prefix"], "manifest.json"
             )
+
+            self.dataset_config["s3_manifest"] = os.path.join(
+                's3://',
+                self.s3_config["bucket"],
+                self.dataset_config["manifest_prefix"]
+            )
+            logging.info("Saving manifest file to %s", self.dataset_config["s3_manifest"])
+
             self.s3_config["client"].upload_fileobj(
-                manifest_file, self.s3_config["bucket"], self.s3_config["manifest"]
+                manifest_file, self.s3_config["bucket"], self.dataset_config["manifest_prefix"]
             )
 
     def generate_tfrecord(self) -> None:
@@ -152,7 +181,7 @@ class AWSDataset(COVADataset):
             base_job_name="tf2-object-detection",
         )
         ts1 = time.time()
-        logger.info("Took %.2f seconds to create data Processor.", ts1 - ts0)
+        logger.debug("Took %.2f seconds to create data Processor.", ts1 - ts0)
 
         input_folder = "/opt/ml/processing/input"
         ground_truth_manifest = "/opt/ml/processing/input/manifest.json"
@@ -174,7 +203,7 @@ class AWSDataset(COVADataset):
             inputs=[
                 ProcessingInput(
                     input_name="input",
-                    source=self.s3_config["manifest"],
+                    source=self.s3_config["s3_images"],
                     destination=input_folder,
                 )
             ],
@@ -182,12 +211,12 @@ class AWSDataset(COVADataset):
                 ProcessingOutput(
                     output_name="tfrecords",
                     source=output_folder,
-                    destination=self.dataset_destination,
+                    destination=self.dataset_config["dataset_destination"],
                 )
             ],
         )
         ts1 = time.time()
-        logger.info("Took %2f seconds to execute data Processor.", ts1 - ts0)
+        logger.debug("Took %2f seconds to execute data Processor.", ts1 - ts0)
 
     def epilogue(self) -> None:
         pass
