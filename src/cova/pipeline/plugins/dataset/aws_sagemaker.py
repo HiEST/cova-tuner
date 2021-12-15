@@ -13,7 +13,7 @@ import sagemaker
 from sagemaker.processing import Processor, ProcessingInput, ProcessingOutput
 
 
-from edge_autotune.pipeline.pipeline import COVADataset
+from cova.pipeline.pipeline import COVADataset
 
 
 logger = logging.getLogger(__name__)

@@ -4,8 +4,8 @@ Uses default parameters for motion detection."""
 import numpy as np
 from typing import List
 
-from edge_autotune.pipeline.pipeline import COVAFilter
-from edge_autotune.motion.motion_detector import BackgroundCV, MotionDetector
+from cova.pipeline.pipeline import COVAFilter
+from cova.motion.motion_detector import BackgroundCV, MotionDetector
 
 
 class FilterStatic(COVAFilter):

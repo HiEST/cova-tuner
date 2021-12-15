@@ -28,8 +28,8 @@ except ImportError:
     logger.warning("IECore could not be loaded. Ignore if not using OpenVINO models.")
     pass
 
-from edge_autotune.dnn.tools import load_model, load_pbtxt
-from edge_autotune.dnn.dataset import get_dataset_labels
+from cova.dnn.tools import load_model, load_pbtxt
+from cova.dnn.dataset import get_dataset_labels
 
 
 class Model(ABC):

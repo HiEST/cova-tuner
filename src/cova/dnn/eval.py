@@ -73,8 +73,7 @@ def eager_eval_loop(
 
     if label_map is None:
         eval_input_config.label_map_path = '/tmp/label_map.pbtxt'
-    else:
-        eval_input_config.label_map_path = f'/tf/workspace/edge_autotune/training/detection/eager/{eval_input_config.label_map_path}'
+    
     eval_input_config.tf_record_input_reader.input_path[0] = eval_dataset
     strategy = tf.compat.v2.distribute.get_strategy()
     with strategy.scope():

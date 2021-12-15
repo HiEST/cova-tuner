@@ -15,8 +15,8 @@ from typing import Dict, List, Tuple, Optional
 import cv2
 import numpy as np
 
-from edge_autotune.motion.motion_detector import resize_if_smaller, merge_overlapping_boxes
-from edge_autotune.dnn import metrics
+from cova.motion.motion_detector import resize_if_smaller, merge_overlapping_boxes
+from cova.dnn import metrics
 
 logger = logging.getLogger(__name__)
 

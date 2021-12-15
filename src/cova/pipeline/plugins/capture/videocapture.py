@@ -4,7 +4,7 @@ from typing import Tuple
 
 import cv2
 
-from edge_autotune.pipeline.pipeline import COVACapture
+from cova.pipeline.pipeline import COVACapture
 
 
 class VideoCapture(COVACapture):

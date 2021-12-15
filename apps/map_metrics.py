@@ -11,8 +11,8 @@ import pandas as pd
 
 from 
 
-from edge_autotune.motion.motion_detector import non_max_suppression_fast
-from edge_autotune.dnn.metrics import get_precision_recall, evaluate_predictions
+from cova.motion.motion_detector import non_max_suppression_fast
+from cova.dnn.metrics import get_precision_recall, evaluate_predictions
 
 PATH = '/home/drivas/Workspace/remote/bscdc-ml02/training/edgeautotuner/apps/'
 

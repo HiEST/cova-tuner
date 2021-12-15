@@ -1,4 +1,4 @@
 Usage
 =====
-.. automodule:: edge_autotune.api
+.. automodule:: cova.api
     :members:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict
 
 
-from edge_autotune.pipeline.pipeline import COVAAutoTune
+from cova.pipeline.pipeline import COVAAutoTune
 
 
 logger = logging.getLogger(__name__)

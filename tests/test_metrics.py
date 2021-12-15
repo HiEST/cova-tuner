@@ -1,6 +1,6 @@
 import pytest
 
-from edge_autotune.dnn import metrics
+from cova.dnn import metrics
 
 
 @pytest.mark.parametrize(

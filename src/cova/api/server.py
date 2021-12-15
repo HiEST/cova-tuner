@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from edge_autotune.dnn.infer import Model
+from cova.dnn.infer import Model
 
 
 app = Flask(__name__)

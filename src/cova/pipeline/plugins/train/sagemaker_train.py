@@ -1,7 +1,7 @@
 """This module implements a COVATrainer to fine-tune models using TensorFlow's Object Detection API."""
 import logging
 
-from edge_autotune.pipeline.pipeline import COVATrain
+from cova.pipeline.pipeline import COVATrain
 from sagemaker.tensorflow import TensorFlow
 from sagemaker.debugger import TensorBoardOutputConfig
 
