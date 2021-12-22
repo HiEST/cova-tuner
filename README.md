@@ -1,7 +1,11 @@
 <h1 align="center">
   <br>
-  <img src="https://user-images.githubusercontent.com/11491836/114053034-dcac7600-988e-11eb-9227-27c92d1114b7.png" alt="Edge AutoTune" width="600">
+  <!--
+    <img src="https://user-images.githubusercontent.com/11491836/114053034-dcac7600-988e-11eb-9227-27c92d1114b7.png" alt="Edge AutoTune" width="600">
+  -->
+    <img src="https://user-images.githubusercontent.com/11491836/147062336-a44da7cf-8085-4247-8e6c-08ddf18dada6.png" alt="COVA" width="600">
 </h1>
+
 
   <a href='https://opensource.org/licenses/Apache-2.0'>
     <img src='https://img.shields.io/badge/License-Apache%202.0-blue.svg' alt='License'/>
@@ -14,7 +18,7 @@
 </p>
 
 <p align="center">
-    <b>Edge AutoTune</b> automates the optimization of convolutional neural networks deployed to the edge for video analytics.
+    <b>COVA</b> automates the optimization of convolutional neural networks deployed to the edge for video analytics.
 </p>
 
 <p align="center">
