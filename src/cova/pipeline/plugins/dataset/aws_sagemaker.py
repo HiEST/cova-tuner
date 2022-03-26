@@ -49,13 +49,15 @@ class AWSDataset(COVADataset):
         )
 
         self.dataset_config["dataset_destination"] = os.path.join(
-            's3://',
+            "s3://",
             self.s3_config["bucket"],
             self.dataset_config["dataset_prefix"],
             # "{}.record".format(self.dataset_config["dataset_name"]),
         )
 
-        logging.info("Dataset will be saved to %s", self.dataset_config["dataset_destination"])
+        logging.info(
+            "Dataset will be saved to %s", self.dataset_config["dataset_destination"]
+        )
 
     def generate(self, images_path: str, annotations_path: str) -> str:
         """Generates dataset in TFRecord format and leaves it in an S3 bucket"""
@@ -158,14 +160,18 @@ class AWSDataset(COVADataset):
             )
 
             self.dataset_config["s3_manifest"] = os.path.join(
-                's3://',
+                "s3://",
                 self.s3_config["bucket"],
-                self.dataset_config["manifest_prefix"]
+                self.dataset_config["manifest_prefix"],
             )
-            logging.info("Saving manifest file to %s", self.dataset_config["s3_manifest"])
+            logging.info(
+                "Saving manifest file to %s", self.dataset_config["s3_manifest"]
+            )
 
             self.s3_config["client"].upload_fileobj(
-                manifest_file, self.s3_config["bucket"], self.dataset_config["manifest_prefix"]
+                manifest_file,
+                self.s3_config["bucket"],
+                self.dataset_config["manifest_prefix"],
             )
 
     def generate_tfrecord(self) -> None:

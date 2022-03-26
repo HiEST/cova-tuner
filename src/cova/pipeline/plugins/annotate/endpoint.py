@@ -11,16 +11,16 @@ import numpy as np
 
 from cova.pipeline.pipeline import COVAAnnotate
 
-if (sys.version_info.major == 3 and sys.version_info.minor >= 7):
+if sys.version_info.major == 3 and sys.version_info.minor >= 7:
     Request = namedtuple(
-        'Request', 
-        ['img', 'id', 'results', 'ts_in', 'ts_out'],
-        defaults=[-1, time.time(), []]
+        "Request",
+        ["img", "id", "results", "ts_in", "ts_out"],
+        defaults=[-1, time.time(), []],
     )
 else:
     Request = namedtuple(
-        'Request', 
-        ['img', 'id', 'results', 'ts_in', 'ts_out'],
+        "Request",
+        ["img", "id", "results", "ts_in", "ts_out"],
     )
     Request.__new__.__defaults__ = (-1, time.time(), [])
 
@@ -30,8 +30,8 @@ class FlaskAnnotator(COVAAnnotate):
 
     Provides methods to connect to the server, offload
     annotation of images to obtain grountruths, and query the server
-    to get and post multiple parameters.  
-    
+    to get and post multiple parameters.
+
     Attributes:
         pending: List of images pending to be annotated.
         processed: List containing pairs of already processed images and their annotations.
@@ -39,6 +39,7 @@ class FlaskAnnotator(COVAAnnotate):
         url: Server's url.
         port: Port to connect to the server.
     """
+
     def __init__(self, url: str, port: int = 6000):
         """Init EdgeClient with url and port to connect to the server."""
         self._url = url
@@ -50,32 +51,35 @@ class FlaskAnnotator(COVAAnnotate):
     @staticmethod
     def _process_response(response):
         results = json.loads(response.text)
-        results = results.get('data', response.text)
+        results = results.get("data", response.text)
         return response.status_code, results
 
     @staticmethod
     def _encode_img(img, encoding):
-        # FIXME: Move to PIL or check if cv2 is using BGR.  
+        # FIXME: Move to PIL or check if cv2 is using BGR.
         _, buf = cv2.imencode(encoding, img)
         return buf
 
-    def post_infer(self, img: np.array, encoding: str = 'png', model: str = ''):
-        buf = FlaskAnnotator._encode_img(img, '.' + encoding)
+    def post_infer(self, img: np.array, encoding: str = "png", model: str = ""):
+        buf = FlaskAnnotator._encode_img(img, "." + encoding)
         img64 = base64.b64encode(buf)
 
-        req_url = f'{self._url}:{self._port}/infer'
+        req_url = f"{self._url}:{self._port}/infer"
         try:
-            r = requests.post(req_url, data={
-                'img': img64,
-                'model': model,
-            })
+            r = requests.post(
+                req_url,
+                data={
+                    "img": img64,
+                    "model": model,
+                },
+            )
         except ConnectionResetError:
             return False, None
 
         return FlaskAnnotator._process_response(r)
 
     def post_request(self, request: Request):
-        """Post infer with request's image. 
+        """Post infer with request's image.
 
         Args:
             request (Request): Request to post.
@@ -83,11 +87,11 @@ class FlaskAnnotator(COVAAnnotate):
         Returns:
             Request: Request with the results of the annotation.
         """
-        img = request['image']
+        img = request["image"]
         ret, results = self.post_infer(img)
         if ret:
-            request['results'] = results
-            request['ts_out'] = time.time()
+            request["results"] = results
+            request["ts_out"] = time.time()
         return request
 
     def process(self, img: np.array) -> None:
@@ -97,7 +101,7 @@ class FlaskAnnotator(COVAAnnotate):
             img (np.array): Image to append.
 
         Returns:
-            int: id of the request. 
+            int: id of the request.
         """
         new_req = Request(img, self.num_reqs)
         self.pending.append(new_req)
@@ -117,4 +121,4 @@ class FlaskAnnotator(COVAAnnotate):
 
             for _, req in enumerate(results):
                 self.pending.remove(req)
-                yield req['id'], req['image'], req['results']
+                yield req["id"], req["image"], req["results"]

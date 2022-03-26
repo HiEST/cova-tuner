@@ -26,9 +26,7 @@ def get_args():
     parser = argparse.ArgumentParser(
         description="This program runs a COVA pipeline defined in a json-like config file."
     )
-    parser.add_argument(
-        "config", type=str, help="Path to the configuration file."
-    )
+    parser.add_argument("config", type=str, help="Path to the configuration file.")
 
     return parser
 

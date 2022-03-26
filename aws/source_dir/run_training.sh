@@ -58,7 +58,7 @@ python exporter_main_v2.py \
     --trained_checkpoint_dir ${MODEL_DIR} \
     --pipeline_config_path ${PIPELINE_CONFIG_PATH} \
     --output_directory /tmp/exported
-    
+
 mv /tmp/exported/saved_model /opt/ml/model/1
 
 echo "Finished"

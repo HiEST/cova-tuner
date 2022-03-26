@@ -147,7 +147,7 @@ class COVAAutoTune(COVAPipeline):
             single_stage (str): execute only this stage. Loads only the plugin for this stage. Defaults to None.
         """
 
-        if single_stage != '':
+        if single_stage != "":
             stage_config = pipeline_config[single_stage]
             pipeline_config = {}
             pipeline_config[single_stage] = stage_config
@@ -163,7 +163,7 @@ class COVAAutoTune(COVAPipeline):
                 stage,
             )
 
-        if single_stage == '':
+        if single_stage == "":
             try:
                 assert all([stage in self.pipeline for stage in PIPELINE])
             except AssertionError:
@@ -196,7 +196,7 @@ class COVAAutoTune(COVAPipeline):
         dataset_path = self.pipeline["dataset"].generate(images_path, annotations_path)
         self.pipeline["train"].train(dataset_path)
 
-    def run_stage(self, stage: str, config: List=None) -> None:
+    def run_stage(self, stage: str, config: List = None) -> None:
         """Runs a single stage instead of the full pipeline.
 
         Args:
@@ -210,7 +210,9 @@ class COVAAutoTune(COVAPipeline):
         elif stage == "dataset":
             images_path = config[0]
             annotations_path = config[1]
-            dataset_path = self.pipeline["dataset"].generate(images_path, annotations_path)
+            dataset_path = self.pipeline["dataset"].generate(
+                images_path, annotations_path
+            )
             logger.info("Dataset stored in %s", dataset_path)
         elif stage == "train":
             dataset_path = config[0]

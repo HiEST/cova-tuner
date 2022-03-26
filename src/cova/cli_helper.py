@@ -52,11 +52,11 @@ def _run(config_file: str) -> None:
         config_file (str): path to the config file (json format) with the pipeline configuration.
     """
     config, (single_stage, stage_config) = parse_config(config_file)
-    
+
     auto_tuner = COVAAutoTune()
     auto_tuner.load_pipeline(config, single_stage)
 
-    if single_stage == '':
+    if single_stage == "":
         auto_tuner.run()
     else:
         logger.info(

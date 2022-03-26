@@ -21,56 +21,55 @@ app = Flask(__name__)
 api = Api(app)
 
 loaded_models = {}
-model_in_use = '' 
+model_in_use = ""
 
 
 class Infer(Resource):
     def get(self):
-        data = pd.DataFrame([], columns=['test'])
+        data = pd.DataFrame([], columns=["test"])
         data = data.to_dict()
-        return {'data': data}, 200
-
+        return {"data": data}, 200
 
     def post(self):
-        print('received post request')
+        print("received post request")
         parser = reqparse.RequestParser()
 
-        parser.add_argument('img', required=True)
-        parser.add_argument('model', required=True)
+        parser.add_argument("img", required=True)
+        parser.add_argument("model", required=True)
         # parser.add_argument('iou_threshold', required=False)
 
         args = parser.parse_args()
 
-        if args.model != '' and args.model not in loaded_models.keys():
-            return {
-                'message': 'Invalid model.'
-            }, 401
+        if args.model != "" and args.model not in loaded_models.keys():
+            return {"message": "Invalid model."}, 401
 
         img = base64.b64decode(args.img)
         nparr = np.frombuffer(img, np.uint8)
         img = cv2.imdecode(nparr, flags=1)
 
-        if args.model != '':
+        if args.model != "":
             detector = loaded_models[args.model]
         else:
             detector = loaded_models[model_in_use]
-        
+
         results = detector.run([img])
         return Response(
-            response=json.dumps({
-                "data": results,
-            }),
+            response=json.dumps(
+                {
+                    "data": results,
+                }
+            ),
             status=200,
-            mimetype='application/json'
+            mimetype="application/json",
         )
 
 
-api.add_resource(Infer, '/infer')
+api.add_resource(Infer, "/infer")
 
 
 def start_server(
     model: str,
-    model_id: str = 'default',
+    model_id: str = "default",
     label_map: str = None,
     port: int = 6000,
 ):
@@ -84,4 +83,3 @@ def start_server(
     model_in_use = model_id
 
     app.run(port=port)
-    
