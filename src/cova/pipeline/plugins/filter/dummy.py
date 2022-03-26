@@ -1,6 +1,6 @@
 """This module implements a dummy COVAFilter. It does nothing."""
 
-from edge_autotune.pipeline.pipeline import COVAFilter
+from cova.pipeline.pipeline import COVAFilter
 
 
 class Dummy(COVAFilter):

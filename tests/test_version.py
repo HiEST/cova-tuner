@@ -4,7 +4,7 @@
 
 import unittest
 
-from edge_autotune.version import get_version
+from cova.version import get_version
 
 
 class TestVersion(unittest.TestCase):

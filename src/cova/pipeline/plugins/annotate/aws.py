@@ -11,8 +11,8 @@ from PIL import Image
 import numpy as np
 
 
-from edge_autotune.pipeline.pipeline import COVAAnnotate
-from edge_autotune.api.sagemaker import (
+from cova.pipeline.pipeline import COVAAnnotate
+from cova.api.sagemaker import (
     ModelPackageArnProvider,
     deploy_model,
     batch_transform,

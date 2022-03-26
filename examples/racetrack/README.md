@@ -5,7 +5,7 @@
 The following command will start the server using the groundtruth model. By default, the server listens to the port 6000.
 ```console
 foo@bar:~$ edge_autotune server --model $GT_MODEL_DIR/saved_model
-* Serving Flask app "edge_autotune.api.server" (lazy loading)
+* Serving Flask app "cova.api.server" (lazy loading)
  * Environment: production
    WARNING: This is a development server. Do not use it in a production deployment.
    Use a production WSGI server instead.

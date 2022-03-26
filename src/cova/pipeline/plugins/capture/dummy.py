@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from edge_autotune.pipeline.pipeline import COVACapture
+from cova.pipeline.pipeline import COVACapture
 
 
 class DummyCapture(COVACapture):

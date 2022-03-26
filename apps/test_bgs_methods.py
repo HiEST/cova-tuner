@@ -14,9 +14,9 @@ import pandas as pd
 from tqdm import tqdm
 import imutils
 
-from edge_autotune.motion.motion_detector import non_max_suppression_fast, Background, BackgroundMethod, \
+from cova.motion.motion_detector import non_max_suppression_fast, Background, BackgroundMethod, \
                                                 GaussianBlur, merge_overlapping_boxes, resize_if_smaller
-from edge_autotune.dnn.metrics import compute_area_match
+from cova.dnn.metrics import compute_area_match
 
 parser = argparse.ArgumentParser(description='This program shows how to use background subtraction methods provided by \
                                               OpenCV. You can process both videos and images.')

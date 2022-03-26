@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-import edge_autotune.motion.motion_detector as motion
+import cova.motion.motion_detector as motion
 
 class TestMotion(unittest.TestCase):
 

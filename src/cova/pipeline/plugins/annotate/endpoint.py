@@ -9,7 +9,7 @@ import time
 import cv2
 import numpy as np
 
-from edge_autotune.pipeline.pipeline import COVAAnnotate
+from cova.pipeline.pipeline import COVAAnnotate
 
 if (sys.version_info.major == 3 and sys.version_info.minor >= 7):
     Request = namedtuple(

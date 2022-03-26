@@ -31,7 +31,7 @@ except:
                     'Ignore if not using any of the functions to generate TFRecords.')
     pass
 
-from edge_autotune.dnn.tools import label_to_id_map
+from cova.dnn.tools import label_to_id_map
 
 
 def _split_by_filename(

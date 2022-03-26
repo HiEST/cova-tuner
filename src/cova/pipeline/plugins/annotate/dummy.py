@@ -1,6 +1,6 @@
 """This module implements a dummy COVAAnnotator. It does nothing."""
 
-from edge_autotune.pipeline.pipeline import COVAAnnotate
+from cova.pipeline.pipeline import COVAAnnotate
 
 
 class Dummy(COVAAnnotate):

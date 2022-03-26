@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import pytest
 
-import edge_autotune.motion.object_crop as crop
+import cova.motion.object_crop as crop
 
 
 @pytest.fixture

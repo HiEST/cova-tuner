@@ -1,6 +1,6 @@
 """This module implements a dummy COVATrainer. It does nothing."""
 
-from edge_autotune.pipeline.pipeline import COVATrain
+from cova.pipeline.pipeline import COVATrain
 
 
 class DummyTrainer(COVATrain):

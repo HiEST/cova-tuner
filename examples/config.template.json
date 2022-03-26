@@ -8,7 +8,7 @@
         "plugin": "VideoCapture",
         "plugin_path": "",
         "args": {
-            "stream": "../../videos/castelloli.mp4",
+            "stream": "examples/racetrack/racetrack_cam17.mp4",
             "frameskip": 25,
             "resize": [1280, 720]
         }

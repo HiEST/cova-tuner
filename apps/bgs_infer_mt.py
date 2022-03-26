@@ -16,9 +16,9 @@ import pandas as pd
 
 from tqdm import tqdm
 
-from edge_autotune.dnn import infer, metrics
-from edge_autotune.motion import object_crop as crop
-from edge_autotune.motion.motion_detector import merge_overlapping_boxes, resize_if_smaller
+from cova.dnn import infer, metrics
+from cova.motion import object_crop as crop
+from cova.motion.motion_detector import merge_overlapping_boxes, resize_if_smaller
 
 from constants import QUEUE_SIZE, MODELS, VIRAT
 
