@@ -1,6 +1,8 @@
+
 import base64
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 import json
 import requests
 import sys
@@ -11,18 +13,14 @@ import numpy as np
 
 from cova.pipeline.pipeline import COVAAnnotate
 
-if (sys.version_info.major == 3 and sys.version_info.minor >= 7):
-    Request = namedtuple(
-        'Request', 
-        ['img', 'id', 'results', 'ts_in', 'ts_out'],
-        defaults=[-1, time.time(), []]
-    )
-else:
-    Request = namedtuple(
-        'Request', 
-        ['img', 'id', 'results', 'ts_in', 'ts_out'],
-    )
-    Request.__new__.__defaults__ = (-1, time.time(), [])
+
+@dataclass
+class Request:
+    img: np.array
+    id: int = -1
+    results: list = field(default_factory=list)
+    ts_in: float = time.time()
+    ts_out: float = -1
 
 
 class FlaskAnnotator(COVAAnnotate):
@@ -75,7 +73,7 @@ class FlaskAnnotator(COVAAnnotate):
         return FlaskAnnotator._process_response(r)
 
     def post_request(self, request: Request):
-        """Post infer with request's image. 
+        """Post infer with request's image.
 
         Args:
             request (Request): Request to post.
@@ -83,21 +81,21 @@ class FlaskAnnotator(COVAAnnotate):
         Returns:
             Request: Request with the results of the annotation.
         """
-        img = request['image']
+        img = request.img
         ret, results = self.post_infer(img)
         if ret:
-            request['results'] = results
-            request['ts_out'] = time.time()
+            request.results = results
+            request.ts_out = time.time()
         return request
 
-    def process(self, img: np.array) -> None:
+    def annotate(self, img: np.array) -> None:
         """Append image to pending requests.
 
         Args:
             img (np.array): Image to append.
 
         Returns:
-            int: id of the request. 
+            int: id of the request.
         """
         new_req = Request(img, self.num_reqs)
         self.pending.append(new_req)
@@ -117,4 +115,12 @@ class FlaskAnnotator(COVAAnnotate):
 
             for _, req in enumerate(results):
                 self.pending.remove(req)
-                yield req['id'], req['image'], req['results']
+                yield req.id, req.img, req.results
+
+    def epilogue(self):
+        
+        for id, img, results in self.process_pending():
+            print(id)
+            print(img)
+            print(results)
+            break
