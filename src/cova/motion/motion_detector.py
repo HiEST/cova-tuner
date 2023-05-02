@@ -8,8 +8,8 @@ from logging import BASIC_FORMAT
 from typing import Tuple
 
 import cv2
-import numpy as np
 import imutils
+import numpy as np
 
 
 class BackgroundMethod(Enum):
@@ -185,7 +185,6 @@ class BackgroundSimple(Background):
 
         # if gathered enough frames, compute new average background
         if len(self.last_frames) >= self.take:
-
             # avg_last = np.mean(self.last_frames, axis=0)
             avg_last = np.median(self.last_frames, axis=0)
             avg_last = avg_last.astype(np.uint8)
@@ -346,7 +345,6 @@ def non_max_suppression_fast(boxes: list, overlapThresh: float = 0.35):
 
 
 def compute_iou(boxA: list, boxB: list):
-
     # determine the (x, y)-coordinates of the intersection rectangle
     xA = max(boxA[0], boxB[0])
     yA = max(boxA[1], boxB[1])
@@ -380,7 +378,6 @@ def merge_all_boxes(boxes):
 
 
 def merge_overlapping_boxes(boxes: list, iou: float = 0.01):
-
     while True:
         num_boxes = len(boxes)
         for i, box in enumerate(boxes):
@@ -595,7 +592,6 @@ def first_pass_bg(
     background: Background,
     output: str = None,
 ):
-
     cap = cv2.VideoCapture(video)
     ret, frame = cap.read()
 

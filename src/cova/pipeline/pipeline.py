@@ -1,12 +1,11 @@
-from abc import ABC, abstractmethod
 import importlib
 import inspect
 import logging
 import os
-from pathlib import Path
 import sys
-from typing import NewType, Any, Tuple, Callable, Dict, List
-
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any, Callable, Dict, List, NewType, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -66,12 +65,16 @@ class COVAFactory:
             plugins = [plugins_path]
 
         for plugin_file in plugins:
-            plugin, module_name = COVAFactory._load_plugin(plugin_file)
-
+            try:
+                plugin, module_name = COVAFactory._load_plugin(plugin_file)
+            except ModuleNotFoundError:
+                continue
             # Check that no other plugin had the same name.
             conflict_by_class = False
             try:
                 assert self._plugins_by_class.get(plugin.__name__, None) is None
+            except AttributeError:
+                continue
             except AssertionError:
                 conflict_by_class = True
                 msg = (
@@ -147,7 +150,7 @@ class COVAAutoTune(COVAPipeline):
             single_stage (str): execute only this stage. Loads only the plugin for this stage. Defaults to None.
         """
 
-        if single_stage != '':
+        if single_stage != "":
             stage_config = pipeline_config[single_stage]
             pipeline_config = {}
             pipeline_config[single_stage] = stage_config
@@ -163,7 +166,7 @@ class COVAAutoTune(COVAPipeline):
                 stage,
             )
 
-        if single_stage == '':
+        if single_stage == "":
             try:
                 assert all([stage in self.pipeline for stage in PIPELINE])
             except AssertionError:
@@ -196,7 +199,7 @@ class COVAAutoTune(COVAPipeline):
         dataset_path = self.pipeline["dataset"].generate(images_path, annotations_path)
         self.pipeline["train"].train(dataset_path)
 
-    def run_stage(self, stage: str, config: List=None) -> None:
+    def run_stage(self, stage: str, config: List = None) -> None:
         """Runs a single stage instead of the full pipeline.
 
         Args:
@@ -210,7 +213,9 @@ class COVAAutoTune(COVAPipeline):
         elif stage == "dataset":
             images_path = config[0]
             annotations_path = config[1]
-            dataset_path = self.pipeline["dataset"].generate(images_path, annotations_path)
+            dataset_path = self.pipeline["dataset"].generate(
+                images_path, annotations_path
+            )
             logger.info("Dataset stored in %s", dataset_path)
         elif stage == "train":
             dataset_path = config[0]

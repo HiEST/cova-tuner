@@ -1,11 +1,12 @@
 """This module implements a COVAFilter that filters static frames out.
 Uses default parameters for motion detection."""
 
-import numpy as np
 from typing import List
 
-from cova.pipeline.pipeline import COVAFilter
+import numpy as np
+
 from cova.motion.motion_detector import BackgroundCV, MotionDetector
+from cova.pipeline.pipeline import COVAFilter
 
 
 class FilterStatic(COVAFilter):

@@ -4,8 +4,8 @@
 """Methods related to the execution of DNN Models."""
 
 import logging
-from abc import ABC, abstractmethod
 import os
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Tuple
 
@@ -28,8 +28,8 @@ except ImportError:
     logger.warning("IECore could not be loaded. Ignore if not using OpenVINO models.")
     pass
 
-from cova.dnn.tools import load_model, load_pbtxt
 from cova.dnn.dataset import get_dataset_labels
+from cova.dnn.tools import load_model, load_pbtxt
 
 
 class Model(ABC):
@@ -218,18 +218,17 @@ class ModelIE(Model):
             self.input_blob
         ].input_data.shape
 
-
     @staticmethod
     def decode_rcnn_results(results: dict, min_score: float) -> Tuple[list, list, list]:
         """Decodes results from RCNN architecture such as:
-        
-            1. The boxes is a blob with the shape 100, 5 in the format N, 5, where N is the number of detected bounding boxes. For each detection, the description has the format [x_min, y_min, x_max, y_max, conf], where:
 
-                - (x_min, y_min) - coordinates of the top left bounding box corner.
-                - (x_max, y_max) - coordinates of the bottom right bounding box corner
-                - conf - confidence for the predicted class
-            
-            2. The labels is a blob with the shape 100 in the format N, where N is the number of detected bounding boxes. It contains predicted class ID (0 - person) per each detected box.
+        1. The boxes is a blob with the shape 100, 5 in the format N, 5, where N is the number of detected bounding boxes. For each detection, the description has the format [x_min, y_min, x_max, y_max, conf], where:
+
+            - (x_min, y_min) - coordinates of the top left bounding box corner.
+            - (x_max, y_max) - coordinates of the bottom right bounding box corner
+            - conf - confidence for the predicted class
+
+        2. The labels is a blob with the shape 100 in the format N, where N is the number of detected bounding boxes. It contains predicted class ID (0 - person) per each detected box.
         """
         boxes = []
         scores = []
@@ -250,10 +249,10 @@ class ModelIE(Model):
 
         return boxes, scores, class_ids
 
-
     @staticmethod
-    def decode_detection_results(results: dict, min_score: float) -> Tuple[list, list, list]:
-        
+    def decode_detection_results(
+        results: dict, min_score: float
+    ) -> Tuple[list, list, list]:
         # Change a shape of a numpy.ndarray with results ([1, 1, N, 7]) to get another one ([N, 7]),
         # where N is the number of detected bounding boxes
         detections = results.reshape(-1, 7).tolist()
@@ -270,28 +269,30 @@ class ModelIE(Model):
             boxes.append([xmin, ymin, xmax, ymax])
             scores.append(score)
             class_ids.append(class_id)
-        
-        return boxes, scores, class_ids
 
+        return boxes, scores, class_ids
 
     def decode_results(self, results: dict) -> Tuple[list, list, list, list]:
         if len(self.net.outputs) == 1:
             results = results[self.output_blob]
-            boxes, scores, class_ids = ModelIE.decode_detection_results(results, self.min_score)
+            boxes, scores, class_ids = ModelIE.decode_detection_results(
+                results, self.min_score
+            )
         else:
-            boxes, scores, class_ids = ModelIE.decode_rcnn_results(results, self.min_score)
+            boxes, scores, class_ids = ModelIE.decode_rcnn_results(
+                results, self.min_score
+            )
 
         labels = []
         if self.label_map:
             for class_id in class_ids:
                 label = self.label_map.get(int(class_id + 1), None)
                 if label is None:
-                    labels.append('Unknown')
+                    labels.append("Unknown")
                 else:
                     labels.append(label["name"])
 
         return boxes, scores, class_ids, labels
-
 
     def run(self, batch: list) -> list:
         """Run inference on the batch of images.

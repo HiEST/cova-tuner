@@ -7,18 +7,12 @@ import time
 
 import boto3
 import cv2
-from PIL import Image
 import numpy as np
+from PIL import Image
 
-
+from cova.api.sagemaker import (ModelPackageArnProvider, batch_transform,
+                                deploy_model, get_default_bucket)
 from cova.pipeline.pipeline import COVAAnnotate
-from cova.api.sagemaker import (
-    ModelPackageArnProvider,
-    deploy_model,
-    batch_transform,
-    get_default_bucket,
-)
-
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level="INFO")

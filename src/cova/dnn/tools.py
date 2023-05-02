@@ -3,10 +3,10 @@
 
 """This module implements diverse tools useful to work with DNN models and their whereabouts"""
 
-from functools import partial
 import logging
 import os
 import time
+from functools import partial
 
 try:
     import tensorflow as tf

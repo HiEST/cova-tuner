@@ -9,7 +9,7 @@
         "plugin_path": "",
         "args": {
             "stream": "examples/racetrack/racetrack_cam17.mp4",
-            "frameskip": 25,
+            "frameskip": 5,
             "resize": [1280, 720]
         }
     },
@@ -21,32 +21,18 @@
         }
     },
     "annotate": {
-        "plugin": "AWSAnnotation",
+        "plugin": "FlaskAnnotator",
         "plugin_path": "",
         "args": {
-            "aws_config": {
-                "role": "$globals#aws_role",
-                "instance_type": "ml.m4.xlarge"
-            },
-            "s3_config": {
-                "bucket": "$globals#s3_bucket",
-                "prefix": "$globals#s3_prefix"
-            }
+            "url": "http://localhost",
+            "port": 6000
         }
     },
     "dataset": {
-        "plugin": "AWSDataset",
+        "plugin": "RawDataset",
         "plugin_path": "",
         "args": {
-            "aws_config": {
-                "role": "$globals#aws_role",
-                "ecr_image": "[...].region.amazonaws.com/autotune:tfrecord",
-                "instance_type": "ml.m4.xlarge"
-            },
-            "s3_config": {
-                "bucket": "$globals#s3_bucket",
-                "prefix": "$globals#s3_prefix"
-            },
+            "output_dir": "datasets",
             "dataset_config": {
                 "dataset_name": "bcn-nby-test",
                 "valid_classes": [

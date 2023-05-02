@@ -1,12 +1,13 @@
 """This module implements a COVATrainer to fine-tune models using TensorFlow's Object Detection API."""
 import logging
 
-from cova.pipeline.pipeline import COVATrain
-from sagemaker.tensorflow import TensorFlow
 from sagemaker.debugger import TensorBoardOutputConfig
+from sagemaker.tensorflow import TensorFlow
 
+from cova.pipeline.pipeline import COVATrain
 
 logger = logging.getLogger(__name__)
+
 
 class SageMakerTrain(COVATrain):
     """Class implenting COVATrain using SageMaker from AWS"""
@@ -65,7 +66,7 @@ class SageMakerTrain(COVATrain):
             hyperparameters=hyperparameters,
             tensorboard_output_config=self.train_config["tensorboard_output_config"],
             disable_profiler=True,
-            base_job_name='tf2-object-detection',
+            base_job_name="tf2-object-detection",
         )
 
         # train_channel = os.path.join(dataset_path, 'train.record')
@@ -73,6 +74,6 @@ class SageMakerTrain(COVATrain):
         # TODO: We make sure to specify wait=False, so our notebook is not waiting for the training job to finish.
         inputs = {"train": dataset_path}
         estimator.fit(inputs)
-        
+
         job_artifacts_path = estimator.latest_job_tensorboard_artifacts_path()
-        logger.info('Tensorboard artifacts path: %s', job_artifacts_path)
+        logger.info("Tensorboard artifacts path: %s", job_artifacts_path)

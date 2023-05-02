@@ -1,15 +1,14 @@
-
 import base64
+import json
+import sys
+import time
 from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-import json
-import requests
-import sys
-import time
 
 import cv2
 import numpy as np
+import requests
 
 from cova.pipeline.pipeline import COVAAnnotate
 
@@ -28,8 +27,8 @@ class FlaskAnnotator(COVAAnnotate):
 
     Provides methods to connect to the server, offload
     annotation of images to obtain grountruths, and query the server
-    to get and post multiple parameters.  
-    
+    to get and post multiple parameters.
+
     Attributes:
         pending: List of images pending to be annotated.
         processed: List containing pairs of already processed images and their annotations.
@@ -37,6 +36,7 @@ class FlaskAnnotator(COVAAnnotate):
         url: Server's url.
         port: Port to connect to the server.
     """
+
     def __init__(self, url: str, port: int = 6000):
         """Init EdgeClient with url and port to connect to the server."""
         self._url = url
@@ -48,25 +48,28 @@ class FlaskAnnotator(COVAAnnotate):
     @staticmethod
     def _process_response(response):
         results = json.loads(response.text)
-        results = results.get('data', response.text)
+        results = results.get("data", response.text)
         return response.status_code, results
 
     @staticmethod
     def _encode_img(img, encoding):
-        # FIXME: Move to PIL or check if cv2 is using BGR.  
+        # FIXME: Move to PIL or check if cv2 is using BGR.
         _, buf = cv2.imencode(encoding, img)
         return buf
 
-    def post_infer(self, img: np.array, encoding: str = 'png', model: str = ''):
-        buf = FlaskAnnotator._encode_img(img, '.' + encoding)
+    def post_infer(self, img: np.array, encoding: str = "png", model: str = ""):
+        buf = FlaskAnnotator._encode_img(img, "." + encoding)
         img64 = base64.b64encode(buf)
 
-        req_url = f'{self._url}:{self._port}/infer'
+        req_url = f"{self._url}:{self._port}/infer"
         try:
-            r = requests.post(req_url, data={
-                'img': img64,
-                'model': model,
-            })
+            r = requests.post(
+                req_url,
+                data={
+                    "img": img64,
+                    "model": model,
+                },
+            )
         except ConnectionResetError:
             return False, None
 
@@ -118,7 +121,6 @@ class FlaskAnnotator(COVAAnnotate):
                 yield req.id, req.img, req.results
 
     def epilogue(self):
-        
         for id, img, results in self.process_pending():
             print(id)
             print(img)

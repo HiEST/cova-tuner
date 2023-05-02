@@ -7,7 +7,6 @@ import time
 import sagemaker
 from sagemaker import ModelPackage
 
-
 logger = logging.getLogger(__name__)
 
 

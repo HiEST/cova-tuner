@@ -6,21 +6,15 @@ import os
 import time
 from typing import Tuple
 
-from google.protobuf import text_format
 import numpy as np
-
 import tensorflow.compat.v1 as tf
 import tensorflow.compat.v2 as tf2
-
-from object_detection import inputs
-from object_detection import model_lib
-from object_detection import model_lib_v2
-from object_detection import exporter_lib_v2
-from object_detection.utils import config_util
-from object_detection.utils import ops
+from google.protobuf import text_format
+from object_detection import exporter_lib_v2, inputs, model_lib, model_lib_v2
 from object_detection.builders import model_builder, optimizer_builder
 from object_detection.core import standard_fields as fields
 from object_detection.protos import pipeline_pb2
+from object_detection.utils import config_util, ops
 
 
 def set_gpu_config():
@@ -574,7 +568,6 @@ def train_loop(
                 for _ in range(
                     global_step.value(), train_steps, num_steps_per_iteration
                 ):
-
                     loss = _dist_train_step(train_input_iter)
 
                     time_taken = time.time() - last_step_time
@@ -632,7 +625,6 @@ def train_loop_wrapper(
     checkpoint_every_n: int = 1000,
     record_summaries: bool = True,
 ):
-
     tf2.config.set_soft_device_placement(True)
 
     strategy = tf2.compat.v2.distribute.MirroredStrategy()
