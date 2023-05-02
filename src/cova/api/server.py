@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import argparse
 import base64
 import json
 import sys
@@ -14,22 +15,22 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from cova.dnn.infer import Model
+from cova.dnn.infer import ModelTF
 
 
 app = Flask(__name__)
 api = Api(app)
 
 loaded_models = {}
-model_in_use = '' 
+model_in_use = ''
 
 
 class Infer(Resource):
+
     def get(self):
         data = pd.DataFrame([], columns=['test'])
         data = data.to_dict()
         return {'data': data}, 200
-
 
     def post(self):
         print('received post request')
@@ -54,7 +55,7 @@ class Infer(Resource):
             detector = loaded_models[args.model]
         else:
             detector = loaded_models[model_in_use]
-        
+
         results = detector.run([img])
         return Response(
             response=json.dumps({
@@ -79,9 +80,25 @@ def start_server(
     global app
     global api
 
-    detector = Model(model, label_map)
+    detector = ModelTF(model, label_map)
     loaded_models[model_id] = detector
     model_in_use = model_id
 
     app.run(port=port)
-    
+
+
+if __name__ == '__main__':
+    # use argparse
+    args = argparse.ArgumentParser()
+    args.add_argument('--model', type=str, required=True, help='Path to model.')
+    args.add_argument('--model_id', type=str, required=True)
+    args.add_argument('--label_map', type=str, default=None)
+    args.add_argument('--port', type=int, default=6000)
+    args = args.parse_args()
+
+    start_server(
+        model=args.model,
+        model_id=args.model_id,
+        label_map=args.label_map,
+        port=args.port,
+    )
