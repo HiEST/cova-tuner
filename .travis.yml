@@ -3,5 +3,3 @@ sudo: false
 
 python:
  - "3.6"
-
-

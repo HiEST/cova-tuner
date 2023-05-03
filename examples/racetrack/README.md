@@ -16,7 +16,7 @@ foo@bar:~$ edge_autotune server --model $GT_MODEL_DIR/saved_model
 ## 1. Capture (create training dataset)
 First step towards a specialized fine-tuned model is the creation of the training dataset using images from the edge camera feed where the model is to be deployed.
 
-The following command will capture images from the input stream `racetrack_cam17.mp4` and annotate them querying the server we just started in `localhost` and port 6000. 
+The following command will capture images from the input stream `racetrack_cam17.mp4` and annotate them querying the server we just started in `localhost` and port 6000.
 Moreover, we want to stop the command after we have 10 annotated images and we want to consider only objects from the class `car` with a minimum score (confidence) of `0.5`.
 ```console
 foo@bar:~$ edge_autotune capture \
@@ -47,7 +47,7 @@ Finally, we can deploy our newly specialized model to the edge.
 The following command will basically start inference on the specified input stream and show detections with a score greater than 0.5 (by default will show all classes present in the .pbtxt).
 
 ```console
-foo@bar:~$ edge_autotune deploy 
+foo@bar:~$ edge_autotune deploy
                       --stream racetrack_cam17.mp4 \
                       --model models/castelloli/saved_model/saved_model \
                       --label-map datasets/racetrack.pbtxt \
