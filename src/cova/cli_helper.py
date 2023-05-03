@@ -3,7 +3,6 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict
 
 from cova.pipeline.pipeline import COVAAutoTune
 
@@ -11,14 +10,16 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level="INFO")
 
 
-def parse_config(config_file: str) -> Dict:
+def parse_config(config_file: str) -> tuple[dict, tuple[str, list]]:
     """Parses config file with pipeline definition.
 
     Args:
         config_file (str): path to the config file (json format) with the pipeline configuration.
 
     Returns:
-        dict: dictionary containing all configuration parsed from the config file.
+        config: dictionary containing all configuration parsed from the config file.
+        single_stage: name of the single stage to run.
+        stage_config: list of stages to run.
     """
     with open(config_file, "r") as config_fn:
         config = json.load(config_fn)
@@ -26,7 +27,7 @@ def parse_config(config_file: str) -> Dict:
 
     global_definitions = config.pop("globals", None)
     if global_definitions is None:
-        return config
+        return config, ("", [])
 
     single_stage = global_definitions.get("single_stage", "")
     stage_config = global_definitions.get("stage_params", [])
@@ -40,7 +41,7 @@ def parse_config(config_file: str) -> Dict:
 
     config = json.loads(config_str)
     _ = config.pop("globals", None)
-    return config, [single_stage, stage_config]
+    return config, (single_stage, stage_config)
 
 
 def _run(config_file: str) -> None:

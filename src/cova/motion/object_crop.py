@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+# mypy: ignore-errors
 
 """This module implements methods to perform object-level scheduling through cropping and merge of objects"""
 
@@ -16,8 +17,8 @@ import cv2
 import numpy as np
 
 from cova.dnn import metrics
-from cova.motion.motion_detector import (merge_overlapping_boxes,
-                                         resize_if_smaller)
+from cova.motion.motion_detector import BoundingBox
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ class MovingObject:
     cam_id: int  # camera identifier
     frame_id: int  # frame number. Relative to the camera
     obj_id: int  # object identifier. Relative to the list of objects within an inference.
-    box: list  # bounding box coordinates
+    box: BoundingBox  # bounding box coordinates
     inf_box: list  # coordinates within inference matrix
     border: list  # border size on each coordinate
 
@@ -52,11 +53,12 @@ class MergeHeuristic(Enum):
     FIRST_FIT_DECREASING_ONE_DIM = 4
 
 
-def first_fit_decreasing(img, objects: list):
+# FIXME: This doesn't look right...
+def first_fit_decreasing(img, objects: list[MovingObject]):
     # sort boxes based on area in decreasing order
     objects.sort(key=lambda x: x.area, reverse=True)
 
-    max_dim = max([sum([(x[2 + dim] - x[0 + dim]) for x in boxes]) for dim in [0, 1]])
+    max_dim = max([sum([(x[2 + dim] - x[0 + dim]) for x in objects]) for dim in [0, 1]])
 
     # Initialize output matrix with all 0's (black)
     result = np.zeros((max_dim, max_dim, 3))

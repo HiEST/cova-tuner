@@ -37,10 +37,21 @@ class FlaskAnnotator(COVAAnnotate):
         port: Port to connect to the server.
     """
 
-    def __init__(self, url: str, port: int = 6000):
-        """Init EdgeClient with url and port to connect to the server."""
-        self._url = url
-        self._port = port
+    pending: list[Request]
+    processed: list[Request]
+    num_reqs: int
+    url: str
+    port: int
+
+    def __init__(self, url: str, port: int = 6000) -> None:
+        """Init EdgeClient with url and port to connect to the server.
+        
+        Args:
+            url (str): Server's url.
+            port (int, optional): Port to connect to the server. Defaults to 6000.
+        """
+        self.url = url
+        self.port = port
         self.num_reqs = 0
         self.pending = []
         self.processed = []
@@ -61,7 +72,7 @@ class FlaskAnnotator(COVAAnnotate):
         buf = FlaskAnnotator._encode_img(img, "." + encoding)
         img64 = base64.b64encode(buf)
 
-        req_url = f"{self._url}:{self._port}/infer"
+        req_url = f"{self.url}:{self.port}/infer"
         try:
             r = requests.post(
                 req_url,
@@ -75,7 +86,7 @@ class FlaskAnnotator(COVAAnnotate):
 
         return FlaskAnnotator._process_response(r)
 
-    def post_request(self, request: Request):
+    def post_request(self, request: Request) -> Request:
         """Post infer with request's image.
 
         Args:

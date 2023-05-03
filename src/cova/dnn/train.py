@@ -4,7 +4,7 @@
 import copy
 import os
 import time
-from typing import Tuple
+from typing import Optional
 
 import numpy as np
 import tensorflow.compat.v1 as tf
@@ -618,10 +618,10 @@ def train_loop(
 def train_loop_wrapper(
     pipeline_config: str,
     model_dir: str,
-    train_datasets: Tuple[str],
+    train_datasets: tuple[str],
     num_train_steps: int,
-    base_model: str = None,
-    label_map: str = None,
+    base_model: Optional[str] = None,
+    label_map: Optional[str] = None,
     checkpoint_every_n: int = 1000,
     record_summaries: bool = True,
 ):

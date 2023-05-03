@@ -7,10 +7,11 @@ import logging
 import os
 import time
 from functools import partial
+from typing import Optional
 
 try:
     import tensorflow as tf
-except:
+except ImportError:
     logging.warning(
         "TensorFlow module could not be loaded."
         "Ignore if not using any of the functions to load/save TF models."
@@ -43,7 +44,7 @@ def load_saved_model(model: str):
 
 
 def load_checkpoint_model(
-    checkpoint_dir: str, pipeline_config: str, ckpt_id: str = None
+    checkpoint_dir: str, pipeline_config: str, ckpt_id: Optional[str] = None
 ):
     """Load checkpoint model.
 
@@ -131,7 +132,7 @@ def load_checkpoint_model(
     return detection_model
 
 
-def load_model(model_dir: str, ckpt_id: str = None):
+def load_model(model_dir: str, ckpt_id: Optional[str] = None):
     """Load model, either saved_model.pb or checkpoint.
 
     Args:

@@ -9,6 +9,7 @@ import logging
 import os
 from collections import namedtuple
 from pathlib import Path
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -138,7 +139,7 @@ def generate_tfrecord(
 
 
 def generate_joint_tfrecord(
-    output_path: str, images_dirs: str, csv_inputs: list, label_map: dict = None
+    output_path: str, images_dirs: str, csv_inputs: list, label_map: Optional[dict] = None
 ):
     """Generate TFRecord dataset from a list of csv files with detections.
 

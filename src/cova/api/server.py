@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import time
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -15,12 +16,12 @@ import tensorflow as tf
 from flask import Flask, Response
 from flask_restful import Api, Resource, reqparse
 
-from cova.dnn.infer import ModelTF
+from cova.dnn.infer import Model, ModelTF
 
 app = Flask(__name__)
 api = Api(app)
 
-loaded_models = {}
+loaded_models: dict[str, Model] = {}
 model_in_use = ""
 
 
@@ -70,7 +71,7 @@ api.add_resource(Infer, "/infer")
 def start_server(
     model: str,
     model_id: str = "default",
-    label_map: str = None,
+    label_map: Optional[str] = None,
     port: int = 6000,
 ):
     global loaded_models
@@ -92,11 +93,11 @@ if __name__ == "__main__":
     args.add_argument("--model_id", type=str, required=True)
     args.add_argument("--label_map", type=str, default=None)
     args.add_argument("--port", type=int, default=6000)
-    args = args.parse_args()
+    params = args.parse_args()
 
     start_server(
-        model=args.model,
-        model_id=args.model_id,
-        label_map=args.label_map,
-        port=args.port,
+        model=params.model,
+        model_id=params.model_id,
+        label_map=params.label_map,
+        port=params.port,
     )

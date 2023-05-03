@@ -1,16 +1,16 @@
-import importlib
+import importlib.util
 import inspect
 import logging
 import os
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Dict, List, NewType, Tuple
+from typing import Any, Callable, NewType, Optional
 
 logger = logging.getLogger(__name__)
 
-Args = NewType("Args", Dict[str, Any])
-Stage = NewType("Stage", Tuple[str, Args])
+Args = NewType("Args", dict[str, Any])
+Stage = NewType("Stage", tuple[str, Args])
 
 PIPELINE = ["capture", "filter", "annotate", "dataset", "train"]
 CONSTRUCTORS = ["COVACapture", "COVAFilter", "COVAAnnotate", "COVADataset", "COVATrain"]
@@ -28,7 +28,7 @@ class COVAFactory:
         self.load_plugins(plugins_dir)
 
     @staticmethod
-    def _detect_class(module) -> Tuple[Callable, str]:
+    def _detect_class(module) -> Optional[tuple[Callable, str]]:
         """Detects the class the plugin implements and returns its constructor and its parent class."""
         for member in inspect.getmembers(module, inspect.isclass):
             # Has a COVA parent?
@@ -141,7 +141,7 @@ class COVAAutoTune(COVAPipeline):
         self.factory = COVAFactory()
         self.pipeline = {}
 
-    def load_pipeline(self, pipeline_config: dict, single_stage: str = None) -> None:
+    def load_pipeline(self, pipeline_config: dict, single_stage: Optional[str] = None) -> None:
         """Loads a pipeline as defined in the input dictionary pipeline_config,
         which the configuration for each stage defined in the pipeline.
 
@@ -199,7 +199,7 @@ class COVAAutoTune(COVAPipeline):
         dataset_path = self.pipeline["dataset"].generate(images_path, annotations_path)
         self.pipeline["train"].train(dataset_path)
 
-    def run_stage(self, stage: str, config: List = None) -> None:
+    def run_stage(self, stage: str, config: Optional[list] = None) -> None:
         """Runs a single stage instead of the full pipeline.
 
         Args:
@@ -234,7 +234,7 @@ class COVACapture(ABC):
 
 class COVAFilter(ABC):
     @abstractmethod
-    def filter(self, img) -> List[Any]:
+    def filter(self, img) -> list[Any]:
         """Processes one image."""
         raise NotImplementedError
 

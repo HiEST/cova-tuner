@@ -7,7 +7,8 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Tuple
+import sys
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -49,7 +50,7 @@ class ModelTF(Model):
         max_boxes: int = 100,
         min_score: float = 0,
         iou_threshold: float = 0,
-        label_map: str = None,
+        label_map: Optional[str] = None,
     ):
         """Loads TensorFlow model from model_dir and initializes parameters"""
         self.detector = load_model(model_dir)
@@ -136,7 +137,7 @@ class ModelIE(Model):
         max_boxes: int = 100,
         min_score: float = 0.0,
         iou_threshold: float = 0.0,
-        label_map: str = None,
+        label_map: Optional[str] = None,
     ):
         self.max_boxes = max_boxes
         self.nms = iou_threshold > 0
@@ -169,7 +170,7 @@ class ModelIE(Model):
                     for fn in os.listdir(model_dir)
                     if Path(fn).suffix in supported_extensions
                 ][-1]
-            except:
+            except IndexError:
                 raise Exception(
                     f'{model_dir} does not contain a supported file ({", ".join(supported_extensions)}).'
                 )
@@ -179,15 +180,15 @@ class ModelIE(Model):
 
         if len(self.net.input_info) != 1:
             logger.error("Only single input topologies are supported")
-            return -1
+            sys.exit(1)
 
         self.model_type = "object_detection"
         if len(self.net.outputs) == 3:
             if not all(["YoloRegion" in region for region in self.net.outputs.keys()]):
                 logger.error("YOLOv3 models not supported.")
-                return -1
+                sys.exit(1)
             logger.error("Only models with 1 or 2 outputs are supported.")
-            return -1
+            sys.exit(1)
 
         elif len(self.net.outputs) != 1 and not (
             "boxes" in self.net.outputs or "labels" in self.net.outputs
@@ -195,7 +196,7 @@ class ModelIE(Model):
             logger.error(
                 'Only models with 1 output or with 2 with the names "boxes" and "labels" are supported'
             )
-            return -1
+            sys.exit(1)
 
         logger.info("Configuring input and output blobs")
         # Get name of input blob
@@ -219,7 +220,7 @@ class ModelIE(Model):
         ].input_data.shape
 
     @staticmethod
-    def decode_rcnn_results(results: dict, min_score: float) -> Tuple[list, list, list]:
+    def decode_rcnn_results(results: dict, min_score: float) -> tuple[list, list, list]:
         """Decodes results from RCNN architecture such as:
 
         1. The boxes is a blob with the shape 100, 5 in the format N, 5, where N is the number of detected bounding boxes. For each detection, the description has the format [x_min, y_min, x_max, y_max, conf], where:
@@ -251,8 +252,9 @@ class ModelIE(Model):
 
     @staticmethod
     def decode_detection_results(
-        results: dict, min_score: float
-    ) -> Tuple[list, list, list]:
+        results: np.ndarray,
+        min_score: float,
+    ) -> tuple[list, list, list]:
         # Change a shape of a numpy.ndarray with results ([1, 1, N, 7]) to get another one ([N, 7]),
         # where N is the number of detected bounding boxes
         detections = results.reshape(-1, 7).tolist()
@@ -272,7 +274,7 @@ class ModelIE(Model):
 
         return boxes, scores, class_ids
 
-    def decode_results(self, results: dict) -> Tuple[list, list, list, list]:
+    def decode_results(self, results: dict) -> tuple[list, list, list, list]:
         if len(self.net.outputs) == 1:
             results = results[self.output_blob]
             boxes, scores, class_ids = ModelIE.decode_detection_results(
