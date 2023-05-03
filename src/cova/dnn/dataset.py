@@ -139,7 +139,10 @@ def generate_tfrecord(
 
 
 def generate_joint_tfrecord(
-    output_path: str, images_dirs: str, csv_inputs: list, label_map: Optional[dict] = None
+    output_path: str,
+    images_dirs: str,
+    csv_inputs: list,
+    label_map: Optional[dict] = None,
 ):
     """Generate TFRecord dataset from a list of csv files with detections.
 

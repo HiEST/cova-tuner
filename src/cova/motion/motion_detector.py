@@ -13,7 +13,6 @@ import imutils
 import numpy as np
 from numpy.typing import NDArray
 
-
 BoundingBox = list[int]  # [xmin, ymin, xmax, ymax]
 Frame: TypeAlias = NDArray[np.uint8]  # 3D array of shape (height, width, 3)
 
@@ -162,7 +161,13 @@ class BackgroundSimple(Background):
     frameskip: int
     initialized: bool
 
-    def __init__(self, method: BackgroundMethod, take: int = 10, use_last: int = 15, frameskip: int = 1):
+    def __init__(
+        self,
+        method: BackgroundMethod,
+        take: int = 10,
+        use_last: int = 15,
+        frameskip: int = 1,
+    ):
         """Initialize background model.
 
         If method is FIRST, only the first frame will be considered for the background
@@ -407,7 +412,8 @@ def non_max_suppression_fast(boxes: NDArray, overlapThresh: float = 0.35) -> NDA
         overlap = (w * h) / area[idxs[:last]]
         # delete all indexes from the index list that have
         idxs = np.delete(
-            idxs, np.concatenate((np.array([last]), np.where(overlap > overlapThresh)[0]))
+            idxs,
+            np.concatenate((np.array([last]), np.where(overlap > overlapThresh)[0])),
         )
     # return only the bounding boxes that were picked using the
     # integer data type
@@ -447,7 +453,9 @@ def merge_all_boxes(boxes):
     return (minX, minY, maxX, maxY)
 
 
-def merge_overlapping_boxes(boxes: list[BoundingBox], iou: float = 0.01) -> list[BoundingBox]:
+def merge_overlapping_boxes(
+    boxes: list[BoundingBox], iou: float = 0.01
+) -> list[BoundingBox]:
     while True:
         num_boxes = len(boxes)
         for i, box in enumerate(boxes):
@@ -473,7 +481,9 @@ def merge_overlapping_boxes(boxes: list[BoundingBox], iou: float = 0.01) -> list
     return boxes
 
 
-def merge_near_boxes(boxes: list[BoundingBox], proximity: float = 1.05) -> list[BoundingBox]:
+def merge_near_boxes(
+    boxes: list[BoundingBox], proximity: float = 1.05
+) -> list[BoundingBox]:
     """Merge boxes that are near each other.
 
     Args:
@@ -497,7 +507,9 @@ def merge_near_boxes(boxes: list[BoundingBox], proximity: float = 1.05) -> list[
     return merged_boxes
 
 
-def resize_if_smaller(box: BoundingBox, max_dims: tuple[int, int], min_size: tuple[int, int] = (32, 32)) -> BoundingBox:
+def resize_if_smaller(
+    box: BoundingBox, max_dims: tuple[int, int], min_size: tuple[int, int] = (32, 32)
+) -> BoundingBox:
     """Resize box if it is smaller than min_size on any dimension.
 
     Args:

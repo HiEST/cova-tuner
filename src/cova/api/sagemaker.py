@@ -5,7 +5,9 @@ import logging
 import time
 
 import sagemaker
-from sagemaker import ModelPackage
+from sagemaker.session import Session
+
+# from sagemaker import ModelPackage
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +85,7 @@ def deploy_model(
     output_path,
     max_concurrent_transforms=2,
 ):
-    model = ModelPackage(
+    model = sagemaker.ModelPackage(
         role=role, model_package_arn=model_arn, sagemaker_session=sagemaker.Session()
     )
     # model.deploy(num_instances, instance_type, endpoint_name=model_name)
@@ -144,4 +146,4 @@ def get_default_bucket() -> str:
     Returns:
         str: default bucket in s3 of the Sagemaker session.
     """
-    return sagemaker.Session().default_bucket()
+    return Session().default_bucket()

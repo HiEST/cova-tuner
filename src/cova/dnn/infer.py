@@ -5,9 +5,9 @@
 
 import logging
 import os
+import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
-import sys
 from typing import Optional
 
 import cv2

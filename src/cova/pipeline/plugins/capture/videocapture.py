@@ -10,7 +10,9 @@ from cova.pipeline.pipeline import COVACapture
 class VideoCapture(COVACapture):
     """Class implementing decoding as a COVACapture pipeline stage using OpenCV"""
 
-    def __init__(self, stream: str, frameskip: int = 0, resize: Optional[tuple[int, int]] = None):
+    def __init__(
+        self, stream: str, frameskip: int = 0, resize: Optional[tuple[int, int]] = None
+    ):
         """Init VideoCapture with stream to capture from.
 
         Args:

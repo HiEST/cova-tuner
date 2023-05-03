@@ -39,22 +39,37 @@ class COVAFactory:
         return None
 
     @staticmethod
-    def _load_plugin(plugin_file: str) -> Callable[..., Any]:
+    def _load_plugin(plugin_file: str) -> tuple[Callable, str]:
         """Loads a plugin from plugin_file containing the implementation of class_name class."""
         module_name = Path(plugin_file).stem
         spec = importlib.util.spec_from_file_location(module_name, plugin_file)
+        if spec is None:
+            raise ModuleNotFoundError(f"Could not load plugin from file {plugin_file}.")
+
         module = importlib.util.module_from_spec(spec)
+        if module is None:
+            logger.error("Could not load plugin from file %s.", plugin_file)
+            raise ModuleNotFoundError(f"Could not load plugin from file {plugin_file}.")
+
+        if spec.loader is None:
+            logger.error("Could not load plugin from file %s.", plugin_file)
+            raise ModuleNotFoundError(f"Could not load plugin from file {plugin_file}.")
+
         spec.loader.exec_module(module)
 
-        constructor = COVAFactory._detect_class(module)
-        if constructor is None:
-            logger.warning("Could not load plugin from module %s.", module.__name__)
-        else:
-            logger.info(
-                "Loaded plugin %s from module %s.",
-                constructor.__name__,
-                module.__name__,
+        ret = COVAFactory._detect_class(module)
+        if ret is None:
+            logger.error("Could not load plugin from module %s.", module.__name__)
+            raise ModuleNotFoundError(
+                f"Could not load plugin from module {module.__name__}."
             )
+
+        constructor, _ = ret
+        logger.info(
+            "Loaded plugin %s from module %s.",
+            constructor.__name__,
+            module.__name__,
+        )
         return constructor, module.__name__
 
     def load_plugins(self, plugins_path: str) -> None:
@@ -141,7 +156,9 @@ class COVAAutoTune(COVAPipeline):
         self.factory = COVAFactory()
         self.pipeline = {}
 
-    def load_pipeline(self, pipeline_config: dict, single_stage: Optional[str] = None) -> None:
+    def load_pipeline(
+        self, pipeline_config: dict, single_stage: Optional[str] = None
+    ) -> None:
         """Loads a pipeline as defined in the input dictionary pipeline_config,
         which the configuration for each stage defined in the pipeline.
 
@@ -205,11 +222,17 @@ class COVAAutoTune(COVAPipeline):
         Args:
             stage (str): Stage to run
             config (dict): Dictionary containing the configuration required by the stage, if any. Defaults to None
+
+        Raises:
+            ValueError: If the the stage requires configuration and is missing (e.g. dataset or train).
         """
         if stage == "annotate":
             images_path, annotations_path = self.pipeline["annotate"].epilogue()
             logger.info("images stored in %s", images_path)
             logger.info("annotations stored in %s", annotations_path)
+        elif config is None:
+            logger.error("Missing configuration for stage %s", stage)
+            raise ValueError("Missing configuration for stage %s", stage)
         elif stage == "dataset":
             images_path = config[0]
             annotations_path = config[1]

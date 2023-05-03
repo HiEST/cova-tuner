@@ -7,6 +7,7 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import boto3
 import sagemaker
@@ -107,9 +108,11 @@ class AWSDataset(COVADataset):
                 annotations_file.seek(0)
 
                 annotations = json.load(annotations_file)
-                img_dict = {
-                    "source-ref": f"s3://{self.s3_config['bucket']}/"
-                    f"{self.s3_config['images_prefix']}/{Path(filename).stem}",
+                bucket = self.s3_config["bucket"]
+                images_prefix = self.s3_config["images_prefix"]
+                image_id = Path(filename).stem
+                img_dict: dict[str, Any] = {
+                    "source-ref": f"s3://{bucket}/{images_prefix}/{image_id}",
                     dataset_name: {},
                 }
                 img_dict[dataset_name]["annotations"] = []
@@ -192,7 +195,6 @@ class AWSDataset(COVADataset):
         label_map = {
             str(i): c for i, c in enumerate(self.dataset_config["valid_classes"])
         }
-        label_map = json.dumps(label_map)
         output_folder = "/opt/ml/processing/output"
 
         ts0 = time.time()
@@ -200,7 +202,7 @@ class AWSDataset(COVADataset):
             arguments=[
                 "--input={}".format(input_folder),
                 "--ground_truth_manifest={}".format(ground_truth_manifest),
-                "--label_map={}".format(label_map),
+                "--label_map={}".format(json.dumps(label_map)),
                 "--output={}".format(output_folder),
                 "--dataset-name={}".format(self.dataset_config["dataset_name"]),
             ],

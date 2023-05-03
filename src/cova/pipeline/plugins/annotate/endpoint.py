@@ -45,7 +45,7 @@ class FlaskAnnotator(COVAAnnotate):
 
     def __init__(self, url: str, port: int = 6000) -> None:
         """Init EdgeClient with url and port to connect to the server.
-        
+
         Args:
             url (str): Server's url.
             port (int, optional): Port to connect to the server. Defaults to 6000.

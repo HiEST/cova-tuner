@@ -19,7 +19,6 @@ import numpy as np
 from cova.dnn import metrics
 from cova.motion.motion_detector import BoundingBox
 
-
 logger = logging.getLogger(__name__)
 
 

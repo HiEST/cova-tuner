@@ -29,6 +29,11 @@ class AWSAnnotation(COVAAnnotate):
         key_prefix: Prefix of the key to store objects in S3 bucket.
     """
 
+    aws_config: dict
+    s3_config: dict
+    next_img_id: int
+    images_to_upload: list[np.ndarray]
+
     def __init__(self, aws_config: dict, s3_config: dict):
         """Init AWSClient with bucket name to store captured images."""
         self.aws_config = aws_config
@@ -58,7 +63,7 @@ class AWSAnnotation(COVAAnnotate):
         self.next_img_id = 0
         self.images_to_upload = []
 
-    def annotate(self, img: np.array):
+    def annotate(self, img: np.ndarray) -> bool:
         """Appends image to list of images to upload"""
         self.images_to_upload.append(img)
         return True
@@ -83,7 +88,7 @@ class AWSAnnotation(COVAAnnotate):
             Key=key,
         )
 
-    def epilogue(self) -> str:
+    def epilogue(self) -> tuple[str, str]:
         """Finishes annotation step using AWS SageMaker.
 
         First, all images are uploaded. Then, annotation begins using
